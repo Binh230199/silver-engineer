@@ -36,7 +36,7 @@ export interface LoadedSkill extends SkillMeta {
 export class SkillsLoader {
   private skills = new Map<string, LoadedSkill>();
 
-  constructor(private readonly ctx: vscode.ExtensionContext) {}
+  constructor() {}
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -93,21 +93,24 @@ export class SkillsLoader {
   // ── Private loaders ───────────────────────────────────────────────────────
 
   private async loadBuiltins(): Promise<void> {
-    // In VSIX builds, templates are copied to dist/skills/templates/
-    // In dev (F5 / tsc), fall back to src/core/skills/templates/
-    const candidates = [
-      path.join(this.ctx.extensionUri.fsPath, 'dist', 'skills', 'templates'),
-      path.join(this.ctx.extensionUri.fsPath, 'src', 'core', 'skills', 'templates'),
-    ];
+    // Load skills from workspace .github/skills/ — the standard GitHub Copilot skills path.
+    // Each skill lives in its own subdirectory: .github/skills/<name>/SKILL.md
+    // Skills are NOT bundled in the extension; they live in the user's project.
+    const wsFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!wsFolder) return;
 
-    const dir = candidates.find(d => fs.existsSync(d));
-    if (!dir) return;
+    const skillsRoot = path.join(wsFolder.uri.fsPath, '.github', 'skills');
+    if (!fs.existsSync(skillsRoot)) return;
 
-    for (const file of fs.readdirSync(dir)) {
-      if (!file.endsWith('.md')) continue;
-      const full = path.join(dir, file);
-      const skill = parseSkillFile(full, 'builtin');
-      if (skill) this.skills.set(skill.name, skill);
+    // Walk one level: .github/skills/<subdir>/SKILL.md
+    for (const entry of fs.readdirSync(skillsRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      // Support nested (e.g. .github/skills/static-rules/autosar-m5-0-2/SKILL.md)
+      const found = findSkillFiles(path.join(skillsRoot, entry.name));
+      for (const skillFile of found) {
+        const skill = parseSkillFile(skillFile, 'builtin');
+        if (skill) this.skills.set(skill.name, skill);
+      }
     }
   }
 
@@ -149,5 +152,25 @@ function parseSkillFile(filePath: string, source: 'builtin' | 'user'): LoadedSki
 }
 
 function skillNameFromPath(filePath: string): string {
+  // If the file is named SKILL.md, use the parent directory name as the skill name
+  const base = path.basename(filePath);
+  if (base.toUpperCase() === 'SKILL.MD') {
+    return path.basename(path.dirname(filePath)).toLowerCase().replace(/\s+/g, '-');
+  }
   return path.basename(filePath, path.extname(filePath)).toLowerCase().replace(/\s+/g, '-');
+}
+
+/**
+ * Recursively finds all SKILL.md files under a directory.
+ */
+function findSkillFiles(dir: string): string[] {
+  const results: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      results.push(...findSkillFiles(path.join(dir, entry.name)));
+    } else if (entry.name.toUpperCase() === 'SKILL.MD') {
+      results.push(path.join(dir, entry.name));
+    }
+  }
+  return results;
 }

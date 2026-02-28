@@ -25,7 +25,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const secrets = new SecretManager(context);
   const graph   = new GraphStore(context);
   const vectors = new VectorStore(context);
-  const skills  = new SkillsLoader(context);
+  const skills  = new SkillsLoader();
   const mcp     = new McpServerManager(context, secrets);
 
   // Build partial services first so ToolRegistry can hold a reference;

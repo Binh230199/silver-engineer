@@ -1,8 +1,40 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 import { execSync } from 'child_process';
 import type { SilverServices } from '../types';
 import { extractTicketId } from '../core/mcp/tools';
 import { gatherDailyContext } from '../features/morning-briefing';
+
+// ---------------------------------------------------------------------------
+// Agent profile loader
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads a .github/agents/<name>.agent.md from the workspace root,
+ * strips the YAML frontmatter, and returns the Markdown body as the
+ * agent's system instructions.
+ *
+ * This makes .agent.md files the single source of truth — used both by
+ * the VS Code agent dropdown AND the @silver /review command.
+ */
+function loadAgentPrompt(agentName: string): string {
+  const wsFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!wsFolder) return '';
+
+  const agentPath = path.join(
+    wsFolder.uri.fsPath, '.github', 'agents', `${agentName}.agent.md`,
+  );
+  if (!fs.existsSync(agentPath)) return '';
+
+  try {
+    const raw = fs.readFileSync(agentPath, 'utf8');
+    // Strip YAML frontmatter block (--- ... ---)
+    return raw.replace(/^---[\s\S]*?---\s*\n/, '').trim();
+  } catch {
+    return '';
+  }
+}
 
 const PARTICIPANT_ID = 'silver-engineer.silver-engineer';
 
@@ -271,12 +303,13 @@ async function handleReviewCommand(
     `| **Diff** | ${diffLines} lines |\n\n`,
   );
 
-  // ─ 2. Load reviewer skill instructions ────────────────────────────────
-  const matchedSkills = await svc.skills.findRelevant(skillName);
-  const skillContent  = matchedSkills[0]?.fullContent ?? '';
+  // ─ 2. Load reviewer instructions from .github/agents/<name>.agent.md ──
+  // Agents are the standard VS Code/GitHub Copilot unit for persona definitions.
+  // The same file is used by both the VS Code agent dropdown AND this command.
+  const agentInstructions = loadAgentPrompt(skillName);
 
-  if (!skillContent) {
-    stream.markdown(`> ⚠️  Skill \`${skillName}\` not found. Add \`.vscode/silver-skills/${skillName}.md\` for custom review rules. Using built-in LLM knowledge.\n\n`);
+  if (!agentInstructions) {
+    stream.markdown(`> ⚠️  Agent profile \`.github/agents/${skillName}.agent.md\` not found in workspace. Using built-in LLM knowledge.\n\n`);
   }
 
   // ─ 2b. Enrich with external MCP tools (best-effort, no-op if unavailable) ─
@@ -328,7 +361,7 @@ async function handleReviewCommand(
       '[SYSTEM] You are a code reviewer. ' +
       'Apply the reviewer instructions below exactly. ' +
       'End your response with exactly `[PASS]` or `[FAIL]` on its own line.' +
-      (skillContent ? `\n\n## Reviewer Instructions\n${skillContent}` : ''),
+      (agentInstructions ? `\n\n## Reviewer Instructions\n${agentInstructions}` : ''),
     ),
     vscode.LanguageModelChatMessage.User(
       `## Commit Message\n${commitMsg}` +

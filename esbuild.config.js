@@ -23,7 +23,6 @@ const extensionConfig = {
   treeShaking: true,
   loader: {
     '.wasm': 'file',   // WASM assets copied to dist/ with content-hash name
-    '.md': 'text',     // Inline SKILL.md templates as strings (non-sensitive ones)
   },
   // Ensures WASM files land in dist/ alongside extension.js
   assetNames: 'assets/[name]-[hash]',
@@ -72,17 +71,9 @@ function copyRuntimeAssets() {
       console.warn(`[assets] WARNING: ${src} not found — vectra tokenizer will fail at runtime`);
     }
   }
-  // Built-in skill templates → dist/skills/templates/
-  const skillsSrc = path.join(__dirname, 'src', 'core', 'skills', 'templates');
-  const skillsDst = path.join(distDir, 'skills', 'templates');
-  if (fs.existsSync(skillsSrc)) {
-    if (!fs.existsSync(skillsDst)) fs.mkdirSync(skillsDst, { recursive: true });
-    for (const f of fs.readdirSync(skillsSrc)) {
-      if (!f.endsWith('.md')) continue;
-      fs.copyFileSync(path.join(skillsSrc, f), path.join(skillsDst, f));
-    }
-    console.log(`[assets] Copied skill templates \u2192 dist/skills/templates/`);
-  }
+  // NOTE: Skills are no longer bundled. SkillsLoader reads from the workspace's
+  // .github/skills/ directory at runtime (standard GitHub Copilot skills path).
+  // Agent profiles live in .github/agents/*.agent.md and are also read from the workspace.
   // WASM assets (add ruvector path here when available):
   const wasmSources = [
     // path.join(__dirname, 'node_modules', 'ruvector', 'dist', 'ruvector_bg.wasm'),
