@@ -92,9 +92,9 @@ async function handleSummaryCommand(
   stream.markdown('_Gathering data…_\n\n');
 
   const { prompt, hasLiveData } = await gatherDailyContext(svc, token);
-  const hasGraphData = svc.graph.buildDailySummaryContext().trim().length > 0;
+  const hasGraphData = svc.graph.hasActionableData();
 
-  // No data at all — skip LLM entirely, show setup instructions instead
+  // No real data at all — skip LLM, show setup instructions instead
   if (!hasLiveData && !hasGraphData) {
     stream.markdown('No data sources connected yet. Here\'s how to get a real daily briefing:\n\n');
     stream.markdown('**1. Connect MCP servers** — create `.vscode/mcp.json` in your workspace:\n');

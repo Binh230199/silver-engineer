@@ -175,6 +175,19 @@ export class GraphStore implements vscode.Disposable {
     return lines.join('\n');
   }
 
+  /**
+   * Returns true only when the graph contains actual work items (tickets,
+   * tasks, bugs). Tech stack and person nodes alone are NOT actionable data
+   * and should not trigger an LLM summary.
+   */
+  hasActionableData(): boolean {
+    let found = false;
+    this.graph.forEachNode((_id, attrs) => {
+      if ((attrs as SilverNode).type === 'WorkItem') found = true;
+    });
+    return found;
+  }
+
   /** Export graph data for Webview visualisation */
   exportForVisualisation(): { nodes: unknown[]; edges: unknown[] } {
     const nodes: unknown[] = [];
