@@ -40,9 +40,12 @@ const OPTIONS = {
   compact: true,
   simplify: true,
 
-  // String array: encode string literals into an indexed array with RC4
+  // String array: collect string literals into a shuffled/rotated array.
+  // Encoding is kept as 'none' because RC4 encoding uses encodeURIComponent
+  // internally (btoa path) and crashes on binary-like string literals that
+  // esbuild inlines from vocab.bpe / encoder.json assets.
   stringArray: true,
-  stringArrayEncoding: ['rc4'],
+  stringArrayEncoding: ['none'],
   stringArrayThreshold: 0.6,      // only 60% of strings — keeps size reasonable
   rotateStringArray: true,
   shuffleStringArray: true,
