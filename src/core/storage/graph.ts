@@ -58,6 +58,10 @@ export class GraphStore implements vscode.Disposable {
         const serialized = JSON.parse(raw) as object;
         this.graph.import(serialized);
         console.log(`[SilverEngineer] Graph loaded: ${this.graph.order} nodes, ${this.graph.size} edges`);
+        // Migration: purge legacy auto-seeded nodes (Technology + Person) if
+        // no real WorkItem data exists — these were seeded by old versions of
+        // scanWorkspace() and carry no useful information.
+        this.purgeLegacySeedNodes();
       } catch (err) {
         console.error('[SilverEngineer] Graph load error (will start fresh):', err);
       }
@@ -186,6 +190,27 @@ export class GraphStore implements vscode.Disposable {
       if ((attrs as SilverNode).type === 'WorkItem') found = true;
     });
     return found;
+  }
+
+  /**
+   * Removes Technology and Person nodes that were auto-seeded by old versions
+   * of scanWorkspace() when no real WorkItem data exists.
+   * Safe to call on every load — a no-op if graph is already clean.
+   */
+  private purgeLegacySeedNodes(): void {
+    if (this.hasActionableData()) return; // real data present — don't touch
+
+    const toRemove: string[] = [];
+    this.graph.forEachNode((id, attrs) => {
+      const type = (attrs as SilverNode).type;
+      if (type === 'Technology' || type === 'Person') toRemove.push(id);
+    });
+
+    if (toRemove.length > 0) {
+      toRemove.forEach(id => this.graph.dropNode(id));
+      console.log(`[SilverEngineer] Purged ${toRemove.length} legacy seed node(s) from graph`);
+      void this.save();
+    }
   }
 
   /** Export graph data for Webview visualisation */
