@@ -92,7 +92,7 @@ function scoreToolForIntent(
   tool: vscode.LanguageModelToolInformation,
   intent: IntentDefinition,
 ): number {
-  const haystack = `${tool.name} ${tool.description ?? ''}`.toLowerCase().replace(/[_\-\.]/g, ' ');
+  const haystack = `${tool.name} ${tool.description ?? ''}`.toLowerCase().replace(/[_.-]/g, ' ');
   let score = 0;
   for (const group of intent.keywords) {
     if (group.some(kw => haystack.includes(kw))) {
