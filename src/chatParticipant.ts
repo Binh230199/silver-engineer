@@ -227,6 +227,31 @@ async function handleReviewCommand(
     stream.markdown(`> ⚠️  Skill \`${skillName}\` not found. Add \`.vscode/silver-skills/${skillName}.md\` for custom review rules. Using built-in LLM knowledge.\n\n`);
   }
 
+  // ─ 2b. Enrich with external MCP tools (best-effort, no-op if unavailable) ─
+  //
+  // Architecture: we call tools BY NAME only. We do NOT manage MCP servers.
+  // The user configures their MCP servers (C++ binaries, SaaS SDKs, mcp.json)
+  // independently. If the tool is registered → we get the data. If not → skip.
+  //
+  let externalContext = '';
+
+  if (commitType === 'fix' || commitType === 'fixbug') {
+    const ticketId = extractTicketId(commitMsg);
+    if (ticketId) {
+      stream.markdown(`> 🔍 Looking up Jira ticket **${ticketId}**…\n`);
+      const jiraData = await tryInvokeTool('jira_get_issue', { issueKey: ticketId }, token)
+                    ?? await tryInvokeTool('jira_get_ticket', { key: ticketId }, token)
+                    ?? await tryInvokeTool('get_issue', { issue_id: ticketId }, token);
+
+      if (jiraData) {
+        externalContext += `\n\n## Jira Ticket: ${ticketId}\n${jiraData}`;
+        stream.markdown(`> ✅ Jira context loaded for **${ticketId}**\n\n`);
+      } else {
+        stream.markdown(`> ⚪ Jira MCP tool not available — reviewing without ticket context.\n\n`);
+      }
+    }
+  }
+
   // ─ 3. Truncate diff if too large (> 400 lines) ────────────────────────
   const MAX_DIFF_LINES = 400;
   const diffForReview  = diffLines > MAX_DIFF_LINES
@@ -252,7 +277,9 @@ async function handleReviewCommand(
       (skillContent ? `\n\n## Reviewer Instructions\n${skillContent}` : ''),
     ),
     vscode.LanguageModelChatMessage.User(
-      `## Commit Message\n${commitMsg}\n\n## Diff\n\`\`\`diff\n${diffForReview}\n\`\`\``,
+      `## Commit Message\n${commitMsg}` +
+      externalContext +
+      `\n\n## Diff\n\`\`\`diff\n${diffForReview}\n\`\`\``,
     ),
   ];
 
@@ -341,6 +368,51 @@ async function handleGenericQuery(
   });
 
   return { metadata: { suggestGraph: true } };
+}
+
+// ---------------------------------------------------------------------------
+// MCP tool bridge — graceful, fire-and-forget invocation
+// ---------------------------------------------------------------------------
+
+/**
+ * Try to invoke any registered LM tool (MCP or extension) by name.
+ * Returns the text content of the result, or undefined if:
+ *   - the tool is not registered (user hasn't set up that MCP server)
+ *   - the invocation fails for any reason
+ *
+ * This is the ONLY way silver-engineer touches external MCP tools —
+ * it never manages MCP servers itself, never reads mcp.json.
+ * The user configures their MCP servers (C++ binaries, SaaS SDKs, etc.)
+ * separately; we just call by name.
+ */
+async function tryInvokeTool(
+  toolName: string,
+  input: Record<string, unknown>,
+  token: vscode.CancellationToken,
+): Promise<string | undefined> {
+  // vscode.lm.invokeTool is available from VS Code 1.93+
+  const invokeFn = (vscode.lm as Record<string, unknown>)['invokeTool'] as
+    | ((name: string, opts: { input: Record<string, unknown> }, token: vscode.CancellationToken) => Thenable<{ content: Array<{ value?: string }> }>)
+    | undefined;
+
+  if (typeof invokeFn !== 'function') return undefined;
+
+  try {
+    const result = await invokeFn(toolName, { input }, token);
+    return result?.content?.map(c => c.value ?? '').join('\n').trim() || undefined;
+  } catch {
+    // Tool not registered or invocation failed — silently skip
+    return undefined;
+  }
+}
+
+/**
+ * Extract a Jira-style ticket ID from a commit message.
+ * Looks for patterns like RRRSE-3050, ABC-123, JIRA-1 etc.
+ */
+function extractTicketId(commitMsg: string): string | undefined {
+  const m = commitMsg.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
+  return m?.[1];
 }
 
 // ---------------------------------------------------------------------------
