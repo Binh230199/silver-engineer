@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { execSync } from 'child_process';
-import type { SilverServices } from './types';
-import { extractTicketId } from './mcpTools';
+import type { SilverServices } from '../types';
+import { extractTicketId } from '../core/mcp/tools';
 
 const PARTICIPANT_ID = 'silver-engineer.silver-engineer';
 

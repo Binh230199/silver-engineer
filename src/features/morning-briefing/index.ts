@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { SilverServices } from './types';
+import type { SilverServices } from '../../types';
 
 const STATE_KEY = 'silver.lastNotificationDate'; // stored in globalState (NOT secrets)
 

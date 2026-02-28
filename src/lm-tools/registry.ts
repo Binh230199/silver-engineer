@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { execSync } from 'child_process';
-import type { SilverServices } from './types';
+import type { SilverServices } from '../types';
 
 // ---------------------------------------------------------------------------
 // Types

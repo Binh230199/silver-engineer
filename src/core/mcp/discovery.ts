@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { tryInvokeTool } from './mcpTools';
+import { tryInvokeTool } from './tools';
 
 // ---------------------------------------------------------------------------
 // Intent definitions

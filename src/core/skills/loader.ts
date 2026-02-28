@@ -94,10 +94,10 @@ export class SkillsLoader {
 
   private async loadBuiltins(): Promise<void> {
     // In VSIX builds, templates are copied to dist/skills/templates/
-    // In dev (F5 / tsc), fall back to src/skills/templates/
+    // In dev (F5 / tsc), fall back to src/core/skills/templates/
     const candidates = [
       path.join(this.ctx.extensionUri.fsPath, 'dist', 'skills', 'templates'),
-      path.join(this.ctx.extensionUri.fsPath, 'src',  'skills', 'templates'),
+      path.join(this.ctx.extensionUri.fsPath, 'src', 'core', 'skills', 'templates'),
     ];
 
     const dir = candidates.find(d => fs.existsSync(d));

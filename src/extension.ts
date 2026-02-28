@@ -1,15 +1,15 @@
 import * as vscode from 'vscode';
-import { SecretManager } from './secretManager';
-import { GraphStore } from './graphStore';
-import { VectorStore } from './vectorStore';
-import { SkillsLoader } from './skills/loader';
-import { FileWatcher } from './fileWatcher';
-import { registerChatParticipant } from './chatParticipant';
-import { McpServerManager } from './mcpServer';
-import { ToolRegistry } from './toolRegistry';
-import { NotificationManager } from './notificationManager';
+import { SecretManager } from './core/storage/secrets';
+import { GraphStore } from './core/storage/graph';
+import { VectorStore } from './core/storage/vectors';
+import { SkillsLoader } from './core/skills/loader';
+import { FileWatcher } from './core/watcher';
+import { registerChatParticipant } from './chat/participant';
+import { McpServerManager } from './core/mcp/server';
+import { ToolRegistry } from './lm-tools/registry';
+import { NotificationManager } from './features/morning-briefing';
 import { DashboardPanel, SilverDashboardViewProvider } from './webview/panel';
-import { ToolDiscovery } from './toolDiscovery';
+import { ToolDiscovery } from './core/mcp/discovery';
 import type { SilverServices } from './types';
 
 export type { SilverServices };

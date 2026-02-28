@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import * as net from 'net';
-import type { SecretManager } from './secretManager';
+import type { SecretManager } from '../storage/secrets';
 
 interface McpToolDefinition {
   name: string;

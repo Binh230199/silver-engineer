@@ -73,7 +73,7 @@ function copyRuntimeAssets() {
     }
   }
   // Built-in skill templates → dist/skills/templates/
-  const skillsSrc = path.join(__dirname, 'src', 'skills', 'templates');
+  const skillsSrc = path.join(__dirname, 'src', 'core', 'skills', 'templates');
   const skillsDst = path.join(distDir, 'skills', 'templates');
   if (fs.existsSync(skillsSrc)) {
     if (!fs.existsSync(skillsDst)) fs.mkdirSync(skillsDst, { recursive: true });
