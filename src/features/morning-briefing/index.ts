@@ -191,8 +191,9 @@ function buildSummaryPrompt(
   const parts = [
     `Today is ${today}.`,
     'You are Silver Engineer, a senior AI assistant embedded in VS Code.',
-    'Write a concise morning briefing (3-5 bullet points max).',
-    'Mention specific counts and IDs where available. Be direct and actionable.',
+    'Write a concise morning briefing (3-5 bullet points max) based ONLY on the data provided below.',
+    'Do NOT invent tasks, issues, or recommendations that are not in the data.',
+    'If a section is empty or says "(no prior context)", skip it entirely.',
     '',
   ];
 

@@ -89,13 +89,22 @@ async function handleSummaryCommand(
     return { metadata: {} };
   }
 
-  // Show loading indicator while fetching from MCP tools
-  stream.markdown('> Gathering data from Jira, Coverity, Gerrit…\n\n');
+  stream.markdown('_Gathering data…_\n\n');
 
   const { prompt, hasLiveData } = await gatherDailyContext(svc, token);
+  const hasGraphData = svc.graph.buildDailySummaryContext().trim().length > 0;
 
-  if (!hasLiveData) {
-    stream.markdown('> ⚪ No external MCP tools connected. Configure `.vscode/mcp.json` to get live Jira/Coverity/Gerrit data.\n\n');
+  // No data at all — skip LLM entirely, show setup instructions instead
+  if (!hasLiveData && !hasGraphData) {
+    stream.markdown('No data sources connected yet. Here\'s how to get a real daily briefing:\n\n');
+    stream.markdown('**1. Connect MCP servers** — create `.vscode/mcp.json` in your workspace:\n');
+    stream.markdown('```json\n{\n  "servers": {\n    "my-jira": {\n      "command": "path/to/jira-mcp-server.exe",\n      "env": { "JIRA_URL": "https://jira.company.com" }\n    }\n  }\n}\n```\n\n');
+    stream.markdown('**2. Check which tools are detected** — run `@silver /tools`\n\n');
+    stream.markdown('**3. Once connected**, `/summary` will show:\n');
+    stream.markdown('- Open Jira tickets assigned to you\n');
+    stream.markdown('- New Coverity static defects\n');
+    stream.markdown('- Gerrit commits waiting for your review\n');
+    return { metadata: {} };
   }
 
   const messages = [
@@ -105,6 +114,10 @@ async function handleSummaryCommand(
   const response = await model.sendRequest(messages, {}, token);
   for await (const chunk of response.text) {
     stream.markdown(chunk);
+  }
+
+  if (!hasLiveData) {
+    stream.markdown('\n\n> ⚪ No MCP tools connected — summary based on local knowledge graph only. Run `@silver /tools` to check.');
   }
 
   return { metadata: { suggestGraph: true } };
