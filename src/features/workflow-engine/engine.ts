@@ -207,7 +207,7 @@ export class WorkflowEngine {
     token: vscode.CancellationToken,
   ): Promise<StepResult> {
     const agentName = step.agent ?? '';
-    const agentBody = this.loadAgentPrompt(agentName);
+    const { body: agentBody, model: agentModel } = this.loadAgentPrompt(agentName);
     if (!agentBody) {
       const msg = `.github/agents/${agentName}.agent.md not found`;
       stream.markdown(`> ⚠️ ${msg}\n\n`);
@@ -216,18 +216,30 @@ export class WorkflowEngine {
 
     const inputText = this.resolveInput(step.input, variables);
 
-    const model = await selectModel();
+    // Guard: if an input source was declared but resolved to empty, abort early
+    if (step.input && !inputText.trim()) {
+      const msg = step.input === 'git_diff_staged'
+        ? 'Nothing is staged — run `git add` before executing this workflow'
+        : `Input \`${step.input}\` resolved to empty`;
+      stream.markdown(`> ⚠️ ${msg}\n\n`);
+      return { id: step.id, passed: false, output: '', skipped: false, failReason: msg };
+    }
+
+    const model = await selectModel(agentModel);
     if (!model) {
       return { id: step.id, passed: false, output: '', skipped: false, failReason: 'No LM available' };
     }
 
     const messages: vscode.LanguageModelChatMessage[] = [
       vscode.LanguageModelChatMessage.User(
-        '[SYSTEM] You are a code reviewer. Apply instructions below. ' +
-        'End with exactly `[PASS]` or `[FAIL]` on its own line.\n\n' +
+        '[SYSTEM] You are a code reviewer. Apply the instructions below autonomously. ' +
+        'Do NOT ask for more input. Review only what is provided in the diff below. ' +
+        'End your response with exactly `[PASS]` or `[FAIL]` on its own line.\n\n' +
         `## Agent Instructions\n${agentBody}`,
       ),
-      vscode.LanguageModelChatMessage.User(inputText),
+      vscode.LanguageModelChatMessage.User(
+        `## Staged Diff to Review\n\`\`\`diff\n${inputText}\n\`\`\``,
+      ),
     ];
 
     let output = '';
@@ -361,14 +373,23 @@ export class WorkflowEngine {
     return path.join(wsFolder.uri.fsPath, '.github', 'workflows', 'silver');
   }
 
-  private loadAgentPrompt(agentName: string): string {
+  private loadAgentPrompt(agentName: string): { body: string; model?: string } {
     const wsFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!wsFolder) return '';
+    if (!wsFolder) return { body: '' };
     const agentPath = path.join(wsFolder.uri.fsPath, '.github', 'agents', `${agentName}.agent.md`);
-    if (!fs.existsSync(agentPath)) return '';
+    if (!fs.existsSync(agentPath)) return { body: '' };
     try {
-      return fs.readFileSync(agentPath, 'utf8').replace(/^---[\s\S]*?---\s*\n/, '').trim();
-    } catch { return ''; }
+      const raw = fs.readFileSync(agentPath, 'utf8');
+      // Extract model from YAML frontmatter
+      const fmMatch = raw.match(/^---([\s\S]*?)---\s*\n/);
+      let model: string | undefined;
+      if (fmMatch) {
+        const modelMatch = fmMatch[1].match(/^model:\s*(.+)$/m);
+        if (modelMatch) model = modelMatch[1].trim();
+      }
+      const body = raw.replace(/^---[\s\S]*?---\s*\n/, '').trim();
+      return { body, model };
+    } catch { return { body: '' }; }
   }
 
   private resolveInput(input: string | undefined, variables: Map<string, string>): string {
@@ -402,9 +423,28 @@ export class WorkflowEngine {
 // Module-level helpers
 // ---------------------------------------------------------------------------
 
-async function selectModel(): Promise<vscode.LanguageModelChat | null> {
-  const models = await vscode.lm.selectChatModels({ family: 'gpt-4o' });
-  return models[0] ?? null;
+/**
+ * Selects the best available LM. Tries the agent-specified model first,
+ * then falls back through claude → gpt-4o → any available model.
+ */
+async function selectModel(hint?: string): Promise<vscode.LanguageModelChat | null> {
+  // Try the agent-specified model (e.g. 'claude-sonnet-4-5')
+  if (hint) {
+    // hint may be 'claude-sonnet-4-5' → family='claude', or 'gpt-4o' → family='gpt-4o'
+    const family = hint.startsWith('claude') ? 'claude' : hint;
+    const byHint = await vscode.lm.selectChatModels({ family });
+    if (byHint.length > 0) return byHint[0];
+    // Try exact id match
+    const byId = await vscode.lm.selectChatModels({ id: hint });
+    if (byId.length > 0) return byId[0];
+  }
+  // Fallback chain: claude → gpt-4o → any
+  for (const family of ['claude', 'gpt-4o', 'copilot']) {
+    const m = await vscode.lm.selectChatModels({ family });
+    if (m.length > 0) return m[0];
+  }
+  const any = await vscode.lm.selectChatModels({});
+  return any[0] ?? null;
 }
 
 function checkExpect(output: string, expect?: string): boolean {
