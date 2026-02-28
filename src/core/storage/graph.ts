@@ -206,50 +206,61 @@ export class GraphStore implements vscode.Disposable {
   // ── Workspace scanning ────────────────────────────────────────────────────
 
   /**
-   * Silently scans workspace config files to seed the tech stack subgraph.
-   * Called once in the background after startup.
+   * Scans workspace config files to detect tech stack.
+   * NOT called automatically — must be explicitly triggered by the user
+   * (e.g. via a command), so the graph never gets pre-seeded with defaults.
    */
   async scanWorkspace(): Promise<void> {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) return;
 
     const userId = 'user:current';
-    this.upsertNode(userId, {
-      type: 'Person',
-      label: 'You',
-      weight: 1,
-      metadata: {},
-      updatedAt: new Date().toISOString(),
-    });
+    // Only upsert Person node if we actually find something worth tracking
+    let foundAny = false;
 
     for (const folder of folders) {
-      await this.scanFolder(folder.uri.fsPath, userId);
+      const found = await this.scanFolder(folder.uri.fsPath, userId);
+      if (found) foundAny = true;
     }
 
-    await this.save();
+    if (foundAny) {
+      // Ensure the Person node exists only when there is real data to link
+      this.upsertNode(userId, {
+        type: 'Person',
+        label: 'You',
+        weight: 1,
+        metadata: {},
+        updatedAt: new Date().toISOString(),
+      });
+      await this.save();
+    }
   }
 
-  private async scanFolder(folderPath: string, userId: string): Promise<void> {
-    const packageJsonPath = path.join(folderPath, 'package.json');
-    const pomXmlPath      = path.join(folderPath, 'pom.xml');
+  private async scanFolder(folderPath: string, userId: string): Promise<boolean> {
+    const packageJsonPath  = path.join(folderPath, 'package.json');
+    const pomXmlPath       = path.join(folderPath, 'pom.xml');
     const requirementsPath = path.join(folderPath, 'requirements.txt');
-    const cargoPath       = path.join(folderPath, 'Cargo.toml');
+    const cargoPath        = path.join(folderPath, 'Cargo.toml');
+
+    let found = false;
 
     if (fs.existsSync(packageJsonPath)) {
-      await this.scanPackageJson(packageJsonPath, userId);
+      found = (await this.scanPackageJson(packageJsonPath, userId)) || found;
     }
     if (fs.existsSync(requirementsPath)) {
-      this.addTechNode('Python', userId);
+      this.addTechNode('Python', userId); found = true;
     }
     if (fs.existsSync(pomXmlPath)) {
-      this.addTechNode('Java / Maven', userId);
+      this.addTechNode('Java / Maven', userId); found = true;
     }
     if (fs.existsSync(cargoPath)) {
-      this.addTechNode('Rust', userId);
+      this.addTechNode('Rust', userId); found = true;
     }
+
+    return found;
   }
 
-  private async scanPackageJson(filePath: string, userId: string): Promise<void> {
+  private async scanPackageJson(filePath: string, userId: string): Promise<boolean> {
     try {
       const raw  = await fs.promises.readFile(filePath, 'utf8');
       const pkg  = JSON.parse(raw) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
@@ -262,14 +273,22 @@ export class GraphStore implements vscode.Disposable {
         jest: 'Jest', vitest: 'Vitest',
       };
 
-      this.addTechNode('Node.js / JavaScript', userId);
+      // Only add Node.js node if it is a runtime dependency (not just tooling)
+      const runtimeDeps = Object.keys(pkg.dependencies ?? {});
+      if (runtimeDeps.length > 0) {
+        this.addTechNode('Node.js / JavaScript', userId);
+      }
+
+      let found = false;
       for (const [dep, label] of Object.entries(frameworkMap)) {
         if (dep in deps) {
           this.addTechNode(label, userId);
+          found = true;
         }
       }
+      return found;
     } catch {
-      // ignore parse errors for incomplete files
+      return false;
     }
   }
 

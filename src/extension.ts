@@ -130,10 +130,7 @@ async function runBackgroundStartup(
     await watcher.start();
     context.subscriptions.push(watcher);
 
-    // 5. Scan workspace for tech-stack data to seed the graph
-    void svc.graph.scanWorkspace();
-
-    // 6. Daily summary notification (respects lastNotificationDate guard)
+    // 5. Daily summary notification (respects lastNotificationDate guard)
     const config = vscode.workspace.getConfiguration('silverEngineer');
     if (config.get<boolean>('enableDailySummary', true)) {
       await NotificationManager.maybeShowDailySummary(context, svc);
