@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import type { SilverServices } from './types';
-import { tryInvokeToolFallback, tryInvokeTool } from './mcpTools';
 
 const STATE_KEY = 'silver.lastNotificationDate'; // stored in globalState (NOT secrets)
 
@@ -76,38 +75,18 @@ export class NotificationManager {
     }
 
     const token = new vscode.CancellationTokenSource().token;
+    const { discovery } = svc;
 
-    // ── Fetch live data from external MCP tools (best-effort) ─────────────
+    // ── Fetch live data via ToolDiscovery (best-effort, all parallel) ──────
     //
-    // We call tools BY NAME only. We never manage MCP servers.
-    // If the tool is registered (user has configured mcp.json) → we get data.
-    // If not → that section is silently skipped.
-    const [jiraData, coverityData, gerritData] = await Promise.all([
-      // Jira: open issues assigned to current user
-      tryInvokeToolFallback([
-        { name: 'jira_search_issues',   input: { jql: 'assignee = currentUser() AND status != Done AND updated >= -1d ORDER BY updated DESC', maxResults: 10 } },
-        { name: 'jira_get_my_issues',   input: { status: 'open' } },
-        { name: 'jira_list_issues',     input: { assignee: 'me', resolved: false } },
-      ], token),
-
-      // Coverity: new static analysis defects since yesterday
-      tryInvokeToolFallback([
-        { name: 'coverity_get_defects',      input: { status: 'new', since: yesterdayIso() } },
-        { name: 'coverity_list_issues',      input: { filter: 'new' } },
-        { name: 'get_coverity_issues',       input: { newOnly: true } },
-      ], token),
-
-      // Gerrit: open changes waiting for review
-      tryInvokeToolFallback([
-        { name: 'gerrit_list_changes',       input: { q: 'is:open reviewer:self', limit: 10 } },
-        { name: 'gerrit_get_pending_review', input: {} },
-        { name: 'list_gerrit_changes',       input: { status: 'open' } },
-      ], token),
+    // ToolDiscovery scans vscode.lm.tools and matches tools by keyword scoring
+    // — no hardcoded tool names. Works with any MCP server.
+    const [jiraData, coverityData, gerritData, confluenceData] = await Promise.all([
+      discovery.invoke('JIRA_MY_ISSUES',          { jql: 'assignee = currentUser() AND status != Done AND updated >= -1d', maxResults: 10 }, token),
+      discovery.invoke('COVERITY_DEFECTS',         { status: 'new', since: yesterdayIso() }, token),
+      discovery.invoke('GERRIT_PENDING',           { q: 'is:open reviewer:self', limit: 10 }, token),
+      discovery.invoke('CONFLUENCE_NOTIFICATIONS', { limit: 5 }, token),
     ]);
-
-    // Also pull Confluence notifications if available (non-blocking)
-    const confluenceData = await tryInvokeTool('confluence_get_notifications', { limit: 5 }, token)
-      ?? await tryInvokeTool('confluence_list_tasks', { assignee: 'me', complete: false }, token);
 
     // ── Build LLM prompt with all available context ────────────────────────
     const graphContext = svc.graph.buildDailySummaryContext();

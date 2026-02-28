@@ -51,6 +51,10 @@
           {
             "name": "review",
             "description": "Run AI code review on staged changes before pushing to Gerrit"
+          },
+          {
+            "name": "tools",
+            "description": "Show which external MCP tools are discovered and mapped to Silver Engineer intents"
           }
         ]
       }

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { execSync } from 'child_process';
 import type { SilverServices } from './types';
-import { tryInvokeTool, extractTicketId } from './mcpTools';
+import { extractTicketId } from './mcpTools';
 
 const PARTICIPANT_ID = 'silver-engineer.silver-engineer';
 
@@ -64,6 +64,7 @@ async function handleRequest(
     case 'graph':    return handleGraphCommand(stream);
     case 'workflow': return handleWorkflowCommand(request.prompt, stream, token, svc);
     case 'review':   return handleReviewCommand(request.prompt, stream, token, svc);
+    case 'tools':    return handleToolsCommand(stream, svc);
   }
 
   // ── Generic LM query with context injection ───────────────────────────
@@ -136,6 +137,40 @@ async function handleGraphCommand(
   stream.markdown('Opening Knowledge Graph dashboard…\n');
   await vscode.commands.executeCommand('silver-engineer.openDashboard');
   return { metadata: { suggestSummary: true } };
+}
+
+async function handleToolsCommand(
+  stream: vscode.ChatResponseStream,
+  svc: SilverServices,
+): Promise<vscode.ChatResult> {
+  stream.markdown('## 🔌 MCP Tool Discovery\n\n');
+  stream.markdown('Scanning registered tools and matching to Silver Engineer intents…\n\n');
+
+  // Invalidate cache so we always get a fresh scan
+  svc.discovery.invalidate();
+  const diagnosis = svc.discovery.diagnose();
+
+  let anyFound = false;
+  for (const [intent, result] of Object.entries(diagnosis)) {
+    if (result === 'not found') {
+      stream.markdown(`- ⚪ **${intent}** — no matching tool found\n`);
+    } else {
+      stream.markdown(`- ✅ **${intent}** → \`${result.tool}\` (score ${result.score})\n`);
+      anyFound = true;
+    }
+  }
+
+  stream.markdown('\n');
+  if (!anyFound) {
+    stream.markdown(
+      '> No external MCP tools detected.\n' +
+      '> Configure your MCP servers in `.vscode/mcp.json` and reload the window.\n',
+    );
+  } else {
+    stream.markdown('> Tools are auto-discovered by keyword matching on tool name + description.\n');
+  }
+
+  return { metadata: {} };
 }
 
 async function handleWorkflowCommand(
@@ -240,9 +275,11 @@ async function handleReviewCommand(
     const ticketId = extractTicketId(commitMsg);
     if (ticketId) {
       stream.markdown(`> 🔍 Looking up Jira ticket **${ticketId}**…\n`);
-      const jiraData = await tryInvokeTool('jira_get_issue', { issueKey: ticketId }, token)
-                    ?? await tryInvokeTool('jira_get_ticket', { key: ticketId }, token)
-                    ?? await tryInvokeTool('get_issue', { issue_id: ticketId }, token);
+      const jiraData = await svc.discovery.invoke(
+        'JIRA_GET_ISSUE',
+        { issueKey: ticketId, key: ticketId, issue_id: ticketId },
+        token,
+      );
 
       if (jiraData) {
         externalContext += `\n\n## Jira Ticket: ${ticketId}\n${jiraData}`;

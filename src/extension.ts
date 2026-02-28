@@ -9,6 +9,7 @@ import { McpServerManager } from './mcpServer';
 import { ToolRegistry } from './toolRegistry';
 import { NotificationManager } from './notificationManager';
 import { DashboardPanel, SilverDashboardViewProvider } from './webview/panel';
+import { ToolDiscovery } from './toolDiscovery';
 import type { SilverServices } from './types';
 
 export type { SilverServices };
@@ -29,7 +30,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Build partial services first so ToolRegistry can hold a reference;
   // the tools property is filled in immediately after.
-  const partial = { secrets, graph, vectors, skills, mcp } as SilverServices;
+  const discovery = new ToolDiscovery();
+  const partial = { secrets, graph, vectors, skills, mcp, discovery } as SilverServices;
   const tools   = new ToolRegistry(context, partial);
   partial.tools  = tools;
   services = partial;
