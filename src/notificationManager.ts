@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { SilverServices } from './types';
+import { tryInvokeToolFallback, tryInvokeTool } from './mcpTools';
 
 const STATE_KEY = 'silver.lastNotificationDate'; // stored in globalState (NOT secrets)
 
@@ -64,42 +65,67 @@ export class NotificationManager {
     svc: SilverServices,
     forced: boolean,
   ): Promise<void> {
-    // Check if the MCP server is running and Copilot LM is available
-    const mcpReady = svc.mcp.isRunning();
     const lmAvailable = await isLmAvailable();
-
-    if (!mcpReady || !lmAvailable) {
+    if (!lmAvailable) {
       if (forced) {
         vscode.window.showWarningMessage(
-          'Silver Engineer: MCP server or Copilot LM not available. Please check your setup.',
+          'Silver Engineer: Copilot LM not available. Please check your setup.',
         );
       }
       return;
     }
 
-    // Collect context from the graph (colleagues + open tickets)
+    const token = new vscode.CancellationTokenSource().token;
+
+    // ── Fetch live data from external MCP tools (best-effort) ─────────────
+    //
+    // We call tools BY NAME only. We never manage MCP servers.
+    // If the tool is registered (user has configured mcp.json) → we get data.
+    // If not → that section is silently skipped.
+    const [jiraData, coverityData, gerritData] = await Promise.all([
+      // Jira: open issues assigned to current user
+      tryInvokeToolFallback([
+        { name: 'jira_search_issues',   input: { jql: 'assignee = currentUser() AND status != Done AND updated >= -1d ORDER BY updated DESC', maxResults: 10 } },
+        { name: 'jira_get_my_issues',   input: { status: 'open' } },
+        { name: 'jira_list_issues',     input: { assignee: 'me', resolved: false } },
+      ], token),
+
+      // Coverity: new static analysis defects since yesterday
+      tryInvokeToolFallback([
+        { name: 'coverity_get_defects',      input: { status: 'new', since: yesterdayIso() } },
+        { name: 'coverity_list_issues',      input: { filter: 'new' } },
+        { name: 'get_coverity_issues',       input: { newOnly: true } },
+      ], token),
+
+      // Gerrit: open changes waiting for review
+      tryInvokeToolFallback([
+        { name: 'gerrit_list_changes',       input: { q: 'is:open reviewer:self', limit: 10 } },
+        { name: 'gerrit_get_pending_review', input: {} },
+        { name: 'list_gerrit_changes',       input: { status: 'open' } },
+      ], token),
+    ]);
+
+    // Also pull Confluence notifications if available (non-blocking)
+    const confluenceData = await tryInvokeTool('confluence_get_notifications', { limit: 5 }, token)
+      ?? await tryInvokeTool('confluence_list_tasks', { assignee: 'me', complete: false }, token);
+
+    // ── Build LLM prompt with all available context ────────────────────────
     const graphContext = svc.graph.buildDailySummaryContext();
+    const summaryPrompt = buildSummaryPrompt(
+      graphContext, jiraData, coverityData, gerritData, confluenceData,
+    );
 
-    // Build a concise prompt to send to the LM
-    const summaryPrompt = buildSummaryPrompt(graphContext);
-
-    // Request a summary from the first available LM model
     const [model] = await vscode.lm.selectChatModels({ family: 'gpt-4o' });
-    if (!model) {
-      return;
-    }
+    if (!model) return;
 
-    const messages = [
-      vscode.LanguageModelChatMessage.User(summaryPrompt),
-    ];
+    const messages = [vscode.LanguageModelChatMessage.User(summaryPrompt)];
+    const response = await model.sendRequest(messages, {}, token);
 
-    const response = await model.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
     let summary = '';
     for await (const chunk of response.text) {
       summary += chunk;
     }
 
-    // Truncate for toast display — full text available in Chat
     const short = summary.length > 200 ? summary.slice(0, 197) + '…' : summary;
 
     const action = await vscode.window.showInformationMessage(
@@ -110,7 +136,7 @@ export class NotificationManager {
 
     if (action === 'Open in Chat') {
       await vscode.commands.executeCommand('workbench.action.chat.open', {
-        query: `@silver /summary ${summary}`,
+        query: `@silver /summary`,
       });
     }
   }
@@ -133,18 +159,59 @@ async function isLmAvailable(): Promise<boolean> {
   }
 }
 
-function buildSummaryPrompt(graphContext: string): string {
+function yesterdayIso(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function buildSummaryPrompt(
+  graphContext: string,
+  jiraData?: string,
+  coverityData?: string,
+  gerritData?: string,
+  confluenceData?: string,
+): string {
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
-  return [
+
+  const parts = [
     `Today is ${today}.`,
     'You are Silver Engineer, a senior AI assistant embedded in VS Code.',
-    'Based on the knowledge graph context below, write a concise 2-3 sentence',
-    'summary of what the developer likely needs to focus on today.',
-    'Focus on actionable work items. Be brief and direct.',
+    'Write a concise morning briefing (3-5 bullet points max).',
+    'Mention specific counts and IDs where available. Be direct and actionable.',
     '',
-    '--- Knowledge Graph Context ---',
-    graphContext || '(no prior context yet — consider asking the user about their work)',
-  ].join('\n');
+  ];
+
+  parts.push('--- Knowledge Graph ---');
+  parts.push(graphContext || '(no prior context)');
+  parts.push('');
+
+  if (jiraData) {
+    parts.push('--- Jira (open tickets) ---');
+    parts.push(jiraData);
+    parts.push('');
+  }
+  if (coverityData) {
+    parts.push('--- Coverity (new static defects) ---');
+    parts.push(coverityData);
+    parts.push('');
+  }
+  if (gerritData) {
+    parts.push('--- Gerrit (pending review) ---');
+    parts.push(gerritData);
+    parts.push('');
+  }
+  if (confluenceData) {
+    parts.push('--- Confluence (tasks/notifications) ---');
+    parts.push(confluenceData);
+    parts.push('');
+  }
+
+  if (!jiraData && !coverityData && !gerritData && !confluenceData) {
+    parts.push('(No external MCP tools available — summary based on local knowledge graph only)');
+  }
+
+  return parts.join('\n');
 }

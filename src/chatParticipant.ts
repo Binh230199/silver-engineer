@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { execSync } from 'child_process';
 import type { SilverServices } from './types';
+import { tryInvokeTool, extractTicketId } from './mcpTools';
 
 const PARTICIPANT_ID = 'silver-engineer.silver-engineer';
 
@@ -368,51 +369,6 @@ async function handleGenericQuery(
   });
 
   return { metadata: { suggestGraph: true } };
-}
-
-// ---------------------------------------------------------------------------
-// MCP tool bridge — graceful, fire-and-forget invocation
-// ---------------------------------------------------------------------------
-
-/**
- * Try to invoke any registered LM tool (MCP or extension) by name.
- * Returns the text content of the result, or undefined if:
- *   - the tool is not registered (user hasn't set up that MCP server)
- *   - the invocation fails for any reason
- *
- * This is the ONLY way silver-engineer touches external MCP tools —
- * it never manages MCP servers itself, never reads mcp.json.
- * The user configures their MCP servers (C++ binaries, SaaS SDKs, etc.)
- * separately; we just call by name.
- */
-async function tryInvokeTool(
-  toolName: string,
-  input: Record<string, unknown>,
-  token: vscode.CancellationToken,
-): Promise<string | undefined> {
-  // vscode.lm.invokeTool is available from VS Code 1.93+
-  const invokeFn = (vscode.lm as Record<string, unknown>)['invokeTool'] as
-    | ((name: string, opts: { input: Record<string, unknown> }, token: vscode.CancellationToken) => Thenable<{ content: Array<{ value?: string }> }>)
-    | undefined;
-
-  if (typeof invokeFn !== 'function') return undefined;
-
-  try {
-    const result = await invokeFn(toolName, { input }, token);
-    return result?.content?.map(c => c.value ?? '').join('\n').trim() || undefined;
-  } catch {
-    // Tool not registered or invocation failed — silently skip
-    return undefined;
-  }
-}
-
-/**
- * Extract a Jira-style ticket ID from a commit message.
- * Looks for patterns like RRRSE-3050, ABC-123, JIRA-1 etc.
- */
-function extractTicketId(commitMsg: string): string | undefined {
-  const m = commitMsg.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
-  return m?.[1];
 }
 
 // ---------------------------------------------------------------------------
