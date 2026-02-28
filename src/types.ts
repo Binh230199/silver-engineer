@@ -10,6 +10,7 @@ import type { SkillsLoader }    from './core/skills/loader';
 import type { McpServerManager } from './core/mcp/server';
 import type { ToolRegistry }    from './lm-tools/registry';
 import type { ToolDiscovery }   from './core/mcp/discovery';
+import type { WorkflowEngine }  from './features/workflow-engine/engine';
 
 export interface SilverServices {
   secrets:   SecretManager;
@@ -19,4 +20,5 @@ export interface SilverServices {
   mcp:       McpServerManager;
   tools:     ToolRegistry;
   discovery: ToolDiscovery;
+  workflows: WorkflowEngine;
 }

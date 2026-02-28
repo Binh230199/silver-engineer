@@ -1,0 +1,461 @@
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import { execSync } from 'child_process';
+import * as yaml from 'js-yaml';
+import type {
+  WorkflowDefinition,
+  WorkflowStep,
+  StepResult,
+  WorkflowRunResult,
+} from './types';
+
+// ---------------------------------------------------------------------------
+// WorkflowEngine
+//
+// Reads .github/workflows/silver/*.yml from the workspace, parses them,
+// and executes with full branching logic:
+//   - step types: agent, prompt, shell
+//   - expect / on_fail (abort | continue | retry(max: N))
+//   - condition expressions (steps.<id>.passed)
+//   - {{variable}} interpolation
+//
+// This is the orchestration layer that makes @silver /run truly agentic:
+// it drives multiple LLM calls and shell commands under a defined flow,
+// not just a single prompt.
+// ---------------------------------------------------------------------------
+
+export class WorkflowEngine {
+
+  // ── Public API ─────────────────────────────────────────────────────────
+
+  /**
+   * Lists all available workflows from .github/workflows/silver/*.yml
+   */
+  listWorkflows(): { name: string; description: string; file: string }[] {
+    const dir = this.workflowDir();
+    if (!dir || !fs.existsSync(dir)) return [];
+
+    return fs.readdirSync(dir)
+      .filter(f => f.endsWith('.yml') || f.endsWith('.yaml'))
+      .flatMap(f => {
+        try {
+          const raw = fs.readFileSync(path.join(dir, f), 'utf8');
+          const def = yaml.load(raw) as WorkflowDefinition;
+          return [{ name: def.name ?? path.basename(f, '.yml'), description: def.description ?? '', file: f }];
+        } catch {
+          return [];
+        }
+      });
+  }
+
+  /**
+   * Loads a workflow by name (matches `name:` field in YAML, or filename without extension).
+   */
+  loadWorkflow(name: string): WorkflowDefinition | null {
+    const dir = this.workflowDir();
+    if (!dir || !fs.existsSync(dir)) return null;
+
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.yml') && !f.endsWith('.yaml')) continue;
+      try {
+        const raw = fs.readFileSync(path.join(dir, f), 'utf8');
+        const def = yaml.load(raw) as WorkflowDefinition;
+        const defName = def.name ?? path.basename(f, '.yml');
+        if (defName === name || path.basename(f, '.yml') === name || path.basename(f, '.yaml') === name) {
+          return def;
+        }
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Executes a workflow, streaming progress to the chat response stream.
+   * Returns a full run result including per-step outcomes.
+   */
+  async run(
+    workflow: WorkflowDefinition,
+    stream: vscode.ChatResponseStream,
+    token: vscode.CancellationToken,
+  ): Promise<WorkflowRunResult> {
+    const variables = new Map<string, string>();
+    const stepResults = new Map<string, StepResult>();
+
+    stream.markdown(`## ⚙️ Workflow: \`${workflow.name}\`\n`);
+    if (workflow.description) {
+      stream.markdown(`> ${workflow.description}\n`);
+    }
+    stream.markdown(`\n**${workflow.steps.length} steps** — running now…\n\n`);
+    stream.markdown('---\n\n');
+
+    const results: StepResult[] = [];
+
+    for (const step of workflow.steps) {
+      if (token.isCancellationRequested) break;
+
+      // ── Evaluate condition ──────────────────────────────────────────────
+      if (step.condition) {
+        const conditionPassed = evaluateCondition(step.condition, stepResults);
+        if (!conditionPassed) {
+          const r: StepResult = { id: step.id, passed: true, output: '', skipped: true };
+          stepResults.set(step.id, r);
+          results.push(r);
+          stream.markdown(`⏭️ **\`${step.id}\`** — skipped *(condition not met)*\n\n`);
+          continue;
+        }
+      }
+
+      // ── Execute with retry support ─────────────────────────────────────
+      const maxRetries = parseRetry(step.on_fail);
+      let attempt = 0;
+      let stepResult: StepResult | null = null;
+
+      while (attempt <= maxRetries) {
+        if (attempt > 0) {
+          stream.markdown(`  🔄 Retry ${attempt}/${maxRetries}…\n`);
+        }
+
+        stepResult = await this.runStep(step, variables, stream, token);
+        if (stepResult.passed) break;
+
+        attempt++;
+        if (attempt > maxRetries) break;
+      }
+
+      if (!stepResult) {
+        stepResult = { id: step.id, passed: false, output: '', skipped: false, failReason: 'unknown' };
+      }
+
+      // Capture output variable
+      if (step.output && stepResult.output) {
+        variables.set(step.output, stepResult.output);
+      }
+
+      stepResults.set(step.id, stepResult);
+      results.push(stepResult);
+
+      // ── Handle failure ─────────────────────────────────────────────────
+      if (!stepResult.passed) {
+        const strategy = step.on_fail ?? 'abort';
+        if (strategy === 'abort' || strategy.startsWith('retry')) {
+          // retry exhausted → abort
+          stream.markdown(`\n❌ **Workflow aborted** at step \`${step.id}\`\n`);
+          if (stepResult.failReason) {
+            stream.markdown(`> ${stepResult.failReason}\n`);
+          }
+          return {
+            workflowName: workflow.name,
+            passed: false,
+            steps: results,
+            abortedAt: step.id,
+          };
+        }
+        // continue — already logged in runStep
+      }
+    }
+
+    const allPassed = results.every(r => r.passed || r.skipped);
+    stream.markdown('\n---\n');
+    if (allPassed) {
+      stream.markdown('### ✅ Workflow completed successfully\n');
+    } else {
+      const failed = results.filter(r => !r.passed && !r.skipped).map(r => r.id).join(', ');
+      stream.markdown(`### ⚠️ Workflow completed with failures: \`${failed}\`\n`);
+    }
+
+    return { workflowName: workflow.name, passed: allPassed, steps: results };
+  }
+
+  // ── Private step runners ───────────────────────────────────────────────
+
+  private async runStep(
+    step: WorkflowStep,
+    variables: Map<string, string>,
+    stream: vscode.ChatResponseStream,
+    token: vscode.CancellationToken,
+  ): Promise<StepResult> {
+    const label = step.description ?? step.id;
+    stream.markdown(`### 🔹 \`${step.id}\` — ${label}\n\n`);
+
+    try {
+      switch (step.type) {
+        case 'agent':  return await this.runAgentStep(step, variables, stream, token);
+        case 'prompt': return await this.runPromptStep(step, variables, stream, token);
+        case 'shell':  return this.runShellStep(step, variables, stream);
+        default: {
+          stream.markdown(`> ⚠️ Unknown step type: \`${(step as WorkflowStep).type}\`\n\n`);
+          return { id: step.id, passed: false, output: '', skipped: false, failReason: `unknown type: ${step.type}` };
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      stream.markdown(`> ❌ Step threw: ${msg}\n\n`);
+      return { id: step.id, passed: false, output: '', skipped: false, failReason: msg };
+    }
+  }
+
+  /**
+   * Runs an 'agent' step: loads .github/agents/<name>.agent.md, calls LLM.
+   */
+  private async runAgentStep(
+    step: WorkflowStep,
+    variables: Map<string, string>,
+    stream: vscode.ChatResponseStream,
+    token: vscode.CancellationToken,
+  ): Promise<StepResult> {
+    const agentName = step.agent ?? '';
+    const agentBody = this.loadAgentPrompt(agentName);
+    if (!agentBody) {
+      const msg = `.github/agents/${agentName}.agent.md not found`;
+      stream.markdown(`> ⚠️ ${msg}\n\n`);
+      return { id: step.id, passed: false, output: '', skipped: false, failReason: msg };
+    }
+
+    const inputText = this.resolveInput(step.input, variables);
+
+    const model = await selectModel();
+    if (!model) {
+      return { id: step.id, passed: false, output: '', skipped: false, failReason: 'No LM available' };
+    }
+
+    const messages: vscode.LanguageModelChatMessage[] = [
+      vscode.LanguageModelChatMessage.User(
+        '[SYSTEM] You are a code reviewer. Apply instructions below. ' +
+        'End with exactly `[PASS]` or `[FAIL]` on its own line.\n\n' +
+        `## Agent Instructions\n${agentBody}`,
+      ),
+      vscode.LanguageModelChatMessage.User(inputText),
+    ];
+
+    let output = '';
+    const response = await model.sendRequest(messages, {}, token);
+    for await (const chunk of response.text) {
+      stream.markdown(chunk);
+      output += chunk;
+    }
+    stream.markdown('\n\n');
+
+    const passed = checkExpect(output, step.expect);
+    if (!passed) {
+      const failReason = step.expect
+        ? `Expected \`${step.expect}\` not found in output`
+        : 'Step failed';
+      stream.markdown(`> ❌ ${failReason}\n\n`);
+      return { id: step.id, passed: false, output, skipped: false, failReason };
+    }
+
+    stream.markdown(`> ✅ Passed\n\n`);
+    return { id: step.id, passed: true, output, skipped: false };
+  }
+
+  /**
+   * Runs a 'prompt' step: loads prompt file, calls LLM, optionally captures output.
+   */
+  private async runPromptStep(
+    step: WorkflowStep,
+    variables: Map<string, string>,
+    stream: vscode.ChatResponseStream,
+    token: vscode.CancellationToken,
+  ): Promise<StepResult> {
+    const wsFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!wsFolder) return skipNoWorkspace(step.id);
+
+    const promptFile = step.prompt ?? '';
+    const promptPath = path.join(wsFolder.uri.fsPath, promptFile);
+
+    if (!fs.existsSync(promptPath)) {
+      const msg = `Prompt file not found: ${promptFile}`;
+      stream.markdown(`> ⚠️ ${msg}\n\n`);
+      return { id: step.id, passed: false, output: '', skipped: false, failReason: msg };
+    }
+
+    let promptContent = fs.readFileSync(promptPath, 'utf8');
+    // Strip YAML frontmatter if present
+    promptContent = promptContent.replace(/^---[\s\S]*?---\s*\n/, '').trim();
+    // Interpolate variables into prompt body
+    promptContent = interpolate(promptContent, variables);
+
+    const inputText = this.resolveInput(step.input, variables);
+    const fullPrompt = inputText
+      ? `${promptContent}\n\n## Input\n${inputText}`
+      : promptContent;
+
+    const model = await selectModel();
+    if (!model) {
+      return { id: step.id, passed: false, output: '', skipped: false, failReason: 'No LM available' };
+    }
+
+    const messages = [vscode.LanguageModelChatMessage.User(fullPrompt)];
+
+    let output = '';
+    const response = await model.sendRequest(messages, {}, token);
+    for await (const chunk of response.text) {
+      stream.markdown(chunk);
+      output += chunk;
+    }
+    stream.markdown('\n\n');
+
+    const passed = checkExpect(output, step.expect);
+    if (!passed) {
+      const failReason = step.expect ? `Expected \`${step.expect}\` not found` : 'Step failed';
+      stream.markdown(`> ❌ ${failReason}\n\n`);
+      return { id: step.id, passed: false, output, skipped: false, failReason };
+    }
+
+    if (step.output) {
+      stream.markdown(`> 📋 Output captured to \`{{${step.output}}}\`\n\n`);
+    }
+
+    stream.markdown(`> ✅ Passed\n\n`);
+    return { id: step.id, passed: true, output, skipped: false };
+  }
+
+  /**
+   * Runs a 'shell' step: executes a command, captures stdout.
+   */
+  private runShellStep(
+    step: WorkflowStep,
+    variables: Map<string, string>,
+    stream: vscode.ChatResponseStream,
+  ): StepResult {
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const rawCmd = step.command ?? '';
+    const cmd = interpolate(rawCmd, variables);
+
+    stream.markdown(`\`\`\`\n$ ${cmd}\n\`\`\`\n\n`);
+
+    try {
+      const stdout = execSync(cmd, {
+        encoding: 'utf8',
+        maxBuffer: 256 * 1024,
+        cwd,
+      }).trim();
+
+      if (stdout) stream.markdown(`\`\`\`\n${stdout}\n\`\`\`\n\n`);
+
+      const passed = checkExpect(stdout, step.expect);
+      if (!passed) {
+        const failReason = step.expect ? `Expected \`${step.expect}\` not found in output` : 'Command failed';
+        stream.markdown(`> ❌ ${failReason}\n\n`);
+        return { id: step.id, passed: false, output: stdout, skipped: false, failReason };
+      }
+
+      stream.markdown('> ✅ Passed\n\n');
+      return { id: step.id, passed: true, output: stdout, skipped: false };
+    } catch (err) {
+      const stderr = (err as { stderr?: string }).stderr ?? String(err);
+      stream.markdown(`\`\`\`\n${stderr}\n\`\`\`\n\n`);
+      stream.markdown('> ❌ Command failed\n\n');
+      return { id: step.id, passed: false, output: stderr, skipped: false, failReason: stderr.slice(0, 200) };
+    }
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────
+
+  private workflowDir(): string | null {
+    const wsFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!wsFolder) return null;
+    return path.join(wsFolder.uri.fsPath, '.github', 'workflows', 'silver');
+  }
+
+  private loadAgentPrompt(agentName: string): string {
+    const wsFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!wsFolder) return '';
+    const agentPath = path.join(wsFolder.uri.fsPath, '.github', 'agents', `${agentName}.agent.md`);
+    if (!fs.existsSync(agentPath)) return '';
+    try {
+      return fs.readFileSync(agentPath, 'utf8').replace(/^---[\s\S]*?---\s*\n/, '').trim();
+    } catch { return ''; }
+  }
+
+  private resolveInput(input: string | undefined, variables: Map<string, string>): string {
+    if (!input) return '';
+
+    // Variable reference
+    const varMatch = input.match(/^\{\{(.+)\}\}$/);
+    if (varMatch) return variables.get(varMatch[1].trim()) ?? '';
+
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const opts = { encoding: 'utf8' as const, maxBuffer: 512 * 1024, cwd };
+
+    try {
+      switch (input) {
+        case 'git_diff_staged':
+          return execSync('git diff --staged', opts);
+        case 'git_diff_last_commit':
+          return execSync('git diff HEAD~1..HEAD', opts);
+        case 'commit_message_last':
+          return execSync('git log -1 --pretty=%B', opts).trim();
+        default:
+          return interpolate(input, variables);
+      }
+    } catch {
+      return `(could not resolve input: ${input})`;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Module-level helpers
+// ---------------------------------------------------------------------------
+
+async function selectModel(): Promise<vscode.LanguageModelChat | null> {
+  const models = await vscode.lm.selectChatModels({ family: 'gpt-4o' });
+  return models[0] ?? null;
+}
+
+function checkExpect(output: string, expect?: string): boolean {
+  if (!expect) return true;
+  return output.includes(expect);
+}
+
+/**
+ * Evaluates a condition expression like "steps.review.passed && steps.static.passed"
+ * Only supports: steps.<id>.passed references, &&, ||, !, parentheses.
+ */
+function evaluateCondition(condition: string, results: Map<string, StepResult>): boolean {
+  // Replace steps.<id>.passed with true/false
+  let expr = condition.replace(/steps\.([a-zA-Z0-9_-]+)\.passed/g, (_m, id) => {
+    const r = results.get(id);
+    return r ? String(r.passed) : 'false';
+  });
+
+  // Replace steps.<id>.skipped
+  expr = expr.replace(/steps\.([a-zA-Z0-9_-]+)\.skipped/g, (_m, id) => {
+    const r = results.get(id);
+    return r ? String(r.skipped) : 'false';
+  });
+
+  // Evaluate only if safe (only contains booleans, logic operators, parens)
+  if (/^[true|false|&&|\|\||!|\s|()]+$/.test(expr)) {
+    try {
+      // eslint-disable-next-line no-new-func
+      return Boolean(new Function(`return (${expr})`)());
+    } catch { return false; }
+  }
+
+  return false;
+}
+
+/**
+ * Parses 'retry(max: N)' → returns N. Returns 0 for any other value.
+ */
+function parseRetry(onFail?: string): number {
+  if (!onFail) return 0;
+  const m = onFail.match(/retry\s*\(\s*max\s*:\s*(\d+)\s*\)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+/**
+ * Replaces {{variable_name}} placeholders in a string.
+ */
+function interpolate(text: string, variables: Map<string, string>): string {
+  return text.replace(/\{\{([^}]+)\}\}/g, (_m, key) => variables.get(key.trim()) ?? _m);
+}
+
+function skipNoWorkspace(id: string): StepResult {
+  return { id, passed: false, output: '', skipped: false, failReason: 'No workspace folder open' };
+}

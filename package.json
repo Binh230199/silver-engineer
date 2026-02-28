@@ -7,11 +7,23 @@
   "engines": {
     "vscode": "^1.95.0"
   },
-  "categories": ["AI", "Other"],
-  "keywords": ["ai", "copilot", "mcp", "assistant", "knowledge-graph"],
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "copilot",
+    "mcp",
+    "assistant",
+    "knowledge-graph"
+  ],
   "icon": "assets/icon.png",
   "license": "UNLICENSED",
-  "repository": { "type": "git", "url": "https://github.com/private/silver-engineer" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/private/silver-engineer"
+  },
   "private": true,
   "main": "./dist/extension.js",
   "activationEvents": [
@@ -55,6 +67,14 @@
           {
             "name": "tools",
             "description": "Show which external MCP tools are discovered and mapped to Silver Engineer intents"
+          },
+          {
+            "name": "run",
+            "description": "Execute a named agentic workflow: /run <workflow-name>"
+          },
+          {
+            "name": "workflows",
+            "description": "List all available workflows defined in .github/workflows/silver/"
           }
         ]
       }
@@ -62,83 +82,148 @@
     "languageModelTools": [
       {
         "name": "silver_commit_code",
-        "tags": ["vcs", "git"],
+        "tags": [
+          "vcs",
+          "git"
+        ],
         "displayName": "Commit Code",
         "modelDescription": "Stages and commits files to git with a conventional commit message. Always requires user confirmation.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "message": { "type": "string", "description": "Conventional commit message" },
-            "files": { "type": "array", "items": { "type": "string" }, "description": "File paths to stage (empty = all staged)" }
+            "message": {
+              "type": "string",
+              "description": "Conventional commit message"
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "File paths to stage (empty = all staged)"
+            }
           },
-          "required": ["message"]
+          "required": [
+            "message"
+          ]
         }
       },
       {
         "name": "silver_update_jira",
-        "tags": ["jira", "project-management"],
+        "tags": [
+          "jira",
+          "project-management"
+        ],
         "displayName": "Update Jira Ticket",
         "modelDescription": "Updates a Jira issue status, comment, or assignee. Requires confirmation before writing.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "issueKey": { "type": "string" },
-            "status": { "type": "string" },
-            "comment": { "type": "string" }
+            "issueKey": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "comment": {
+              "type": "string"
+            }
           },
-          "required": ["issueKey"]
+          "required": [
+            "issueKey"
+          ]
         }
       },
       {
         "name": "silver_generate_component",
-        "tags": ["code-generation"],
+        "tags": [
+          "code-generation"
+        ],
         "displayName": "Generate Component",
         "modelDescription": "Scaffolds a new source component (class, module, test) from a skill template.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "skillName": { "type": "string" },
-            "targetPath": { "type": "string" },
-            "params": { "type": "object" }
+            "skillName": {
+              "type": "string"
+            },
+            "targetPath": {
+              "type": "string"
+            },
+            "params": {
+              "type": "object"
+            }
           },
-          "required": ["skillName", "targetPath"]
+          "required": [
+            "skillName",
+            "targetPath"
+          ]
         }
       },
       {
         "name": "silver_recall",
-        "tags": ["memory", "knowledge-graph"],
+        "tags": [
+          "memory",
+          "knowledge-graph"
+        ],
         "displayName": "Recall from Knowledge Graph",
         "modelDescription": "Queries the local GraphRAG (knowledge graph + vector store) for relevant context about colleagues, tech stack, or past decisions.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": { "type": "string" },
-            "topK": { "type": "number", "default": 5 }
+            "query": {
+              "type": "string"
+            },
+            "topK": {
+              "type": "number",
+              "default": 5
+            }
           },
-          "required": ["query"]
+          "required": [
+            "query"
+          ]
         }
       },
       {
         "name": "silver_review_code",
-        "tags": ["git", "review", "quality"],
+        "tags": [
+          "git",
+          "review",
+          "quality"
+        ],
         "displayName": "Review Code (pre-push)",
         "modelDescription": "Captures staged git diff and commit message for AI review. Determines reviewer type from commit prefix (fix/feat/static/test). Use before pushing.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "scope": { "type": "string", "enum": ["staged", "last-commit"], "default": "staged", "description": "staged = git diff --staged, last-commit = HEAD~1..HEAD" }
+            "scope": {
+              "type": "string",
+              "enum": [
+                "staged",
+                "last-commit"
+              ],
+              "default": "staged",
+              "description": "staged = git diff --staged, last-commit = HEAD~1..HEAD"
+            }
           }
         }
       },
       {
         "name": "silver_push_gerrit",
-        "tags": ["git", "gerrit"],
+        "tags": [
+          "git",
+          "gerrit"
+        ],
         "displayName": "Push to Gerrit",
         "modelDescription": "Pushes the current commit to Gerrit for human review (refs/for/<branch>). Always requires user confirmation.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "branch": { "type": "string", "default": "main", "description": "Target branch (e.g. main, develop)" }
+            "branch": {
+              "type": "string",
+              "default": "main",
+              "description": "Target branch (e.g. main, develop)"
+            }
           }
         }
       }
@@ -258,12 +343,13 @@
     "pretest": "npm run build"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "graphology": "^0.25.4",
     "graphology-types": "^0.24.7",
-    "vectra": "^0.7.0",
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "vectra": "^0.7.0"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.95.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",

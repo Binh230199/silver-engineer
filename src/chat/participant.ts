@@ -98,6 +98,8 @@ async function handleRequest(
     case 'workflow': return handleWorkflowCommand(request.prompt, stream, token, svc);
     case 'review':   return handleReviewCommand(request.prompt, stream, token, svc);
     case 'tools':    return handleToolsCommand(stream, svc);
+    case 'run':      return handleRunCommand(request.prompt, stream, token, svc);
+    case 'workflows':return handleListWorkflowsCommand(stream, svc);
   }
 
   // ── Generic LM query with context injection ───────────────────────────
@@ -398,6 +400,64 @@ async function handleReviewCommand(
     stream.markdown('> ⚠️  No `[PASS]` / `[FAIL]` tag found in review. Check the response above manually.\n');
   }
 
+  return { metadata: {} };
+}
+
+// ---------------------------------------------------------------------------
+// /run — Execute a named workflow from .github/workflows/silver/*.yml
+// ---------------------------------------------------------------------------
+
+async function handleRunCommand(
+  prompt: string,
+  stream: vscode.ChatResponseStream,
+  token: vscode.CancellationToken,
+  svc: SilverServices,
+): Promise<vscode.ChatResult> {
+  const workflowName = prompt.trim();
+
+  if (!workflowName) {
+    stream.markdown('## ⚙️ Run Workflow\n\n');
+    stream.markdown('Usage: `@silver /run <workflow-name>`\n\n');
+    stream.markdown('Run `@silver /workflows` to see all available workflows.\n');
+    return { metadata: {} };
+  }
+
+  const workflow = svc.workflows.loadWorkflow(workflowName);
+  if (!workflow) {
+    stream.markdown(`## ⚙️ Workflow: \`${workflowName}\`\n\n`);
+    stream.markdown(`> ❌ No workflow named \`${workflowName}\` found.\n\n`);
+    stream.markdown('Expected location: `.github/workflows/silver/${workflowName}.yml`\n\n');
+    stream.markdown('Run `@silver /workflows` to list available workflows.\n');
+    return { metadata: {} };
+  }
+
+  await svc.workflows.run(workflow, stream, token);
+  return { metadata: {} };
+}
+
+// ---------------------------------------------------------------------------
+// /workflows — List all available workflows
+// ---------------------------------------------------------------------------
+
+async function handleListWorkflowsCommand(
+  stream: vscode.ChatResponseStream,
+  svc: SilverServices,
+): Promise<vscode.ChatResult> {
+  stream.markdown('## ⚙️ Available Workflows\n\n');
+
+  const list = svc.workflows.listWorkflows();
+  if (list.length === 0) {
+    stream.markdown('> No workflows found.\n\n');
+    stream.markdown('Create `.github/workflows/silver/<name>.yml` to define a workflow.\n\n');
+    stream.markdown('**Example:** `.github/workflows/silver/auto-push-commit.yml`\n');
+    return { metadata: {} };
+  }
+
+  for (const w of list) {
+    stream.markdown(`- **\`${w.name}\`** — ${w.description || '*(no description)*'}\n`);
+  }
+
+  stream.markdown('\n> Run with `@silver /run <name>`\n');
   return { metadata: {} };
 }
 

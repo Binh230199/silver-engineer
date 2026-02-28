@@ -10,6 +10,7 @@ import { ToolRegistry } from './lm-tools/registry';
 import { NotificationManager } from './features/morning-briefing';
 import { DashboardPanel, SilverDashboardViewProvider } from './webview/panel';
 import { ToolDiscovery } from './core/mcp/discovery';
+import { WorkflowEngine } from './features/workflow-engine/engine';
 import type { SilverServices } from './types';
 
 export type { SilverServices };
@@ -31,7 +32,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Build partial services first so ToolRegistry can hold a reference;
   // the tools property is filled in immediately after.
   const discovery = new ToolDiscovery();
-  const partial = { secrets, graph, vectors, skills, mcp, discovery } as SilverServices;
+  const workflows  = new WorkflowEngine();
+  const partial = { secrets, graph, vectors, skills, mcp, discovery, workflows } as SilverServices;
   const tools   = new ToolRegistry(context, partial);
   partial.tools  = tools;
   services = partial;
