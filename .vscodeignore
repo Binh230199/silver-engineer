@@ -1,0 +1,11 @@
+# Exclude everything by default, then explicitly include what we need
+**
+!package.json
+!README.md
+!LICENSE
+!assets/**
+!dist/extension.js
+!dist/webview.js
+!dist/encoder.json
+!dist/vocab.bpe
+!dist/skills/**

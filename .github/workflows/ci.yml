@@ -1,0 +1,114 @@
+name: CI — Build & Package
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Package
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: ['20.x']
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Node.js setup ─────────────────────────────────────────────────────
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      # ── Install deps ──────────────────────────────────────────────────────
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Lint ─────────────────────────────────────────────────────────────
+      - name: Lint
+        run: npm run lint
+        continue-on-error: false
+
+      # ── Build (production bundle) ─────────────────────────────────────────
+      - name: Build (production)
+        run: npm run build:prod
+
+      # ── Verify dist artefacts exist ───────────────────────────────────────
+      - name: Verify dist artefacts
+        run: |
+          test -f dist/extension.js || (echo "❌ dist/extension.js missing" && exit 1)
+          test -f dist/webview.js   || (echo "❌ dist/webview.js missing"   && exit 1)
+          echo "✅ dist artefacts present"
+
+      # ── WASM smoke-test: ensure no native require() in bundle ─────────────
+      - name: Sanity check — no native bindings in bundle
+        run: |
+          if grep -q "\.node'" dist/extension.js; then
+            echo "❌ Native .node binding detected in bundle — forbidden"
+            exit 1
+          fi
+          echo "✅ No native bindings detected"
+
+      # ── Security: scan for plaintext secret patterns ──────────────────────
+      - name: Security — no plaintext secrets
+        run: |
+          # Fail if any file contains raw token patterns committed to source
+          if grep -rq --include="*.ts" --include="*.js" \
+              -E "(password|token|apiKey)\s*[:=]\s*['\"][A-Za-z0-9_\-\.]{20,}['\"]" \
+              src/ scripts/; then
+            echo "❌ Potential hardcoded secret detected in source"
+            exit 1
+          fi
+          echo "✅ No hardcoded secrets found"
+
+      # ── Selective obfuscation ─────────────────────────────────────────────
+      - name: Obfuscate AI-core modules (light)
+        run: npm run obfuscate
+
+      # ── Package .vsix ─────────────────────────────────────────────────────
+      - name: Package .vsix
+        run: npx vsce package --no-dependencies --out silver-engineer.vsix
+
+      # ── Upload .vsix as CI artefact ───────────────────────────────────────
+      - name: Upload .vsix artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: silver-engineer-vsix
+          path: silver-engineer.vsix
+          retention-days: 30
+
+      # ── Print artefact size summary ───────────────────────────────────────
+      - name: Artefact size report
+        run: |
+          echo "=== Build artefact sizes ==="
+          du -sh dist/extension.js dist/webview.js silver-engineer.vsix 2>/dev/null || true
+
+  # ── Separate light test job ──────────────────────────────────────────────
+  test-unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Run unit tests (headless)
+        run: |
+          # VS Code extension tests require a display
+          # Use xvfb-run for headless integration tests if configured
+          # npm test
+          echo "⚠️ Integration tests require VS Code — run locally or in self-hosted runner"
+        continue-on-error: true

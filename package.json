@@ -1,0 +1,274 @@
+{
+  "name": "silver-engineer",
+  "displayName": "Silver Engineer",
+  "description": "A senior-engineer AI assistant — local GraphRAG, embedded MCP server, Chat Participant, Skills system, and HITL tool invocation.",
+  "version": "0.1.0",
+  "publisher": "silver-engineer",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": ["AI", "Other"],
+  "keywords": ["ai", "copilot", "mcp", "assistant", "knowledge-graph"],
+  "icon": "assets/icon.png",
+  "license": "UNLICENSED",
+  "repository": { "type": "git", "url": "https://github.com/private/silver-engineer" },
+  "private": true,
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "silver-engineer.mcp",
+        "label": "Silver Engineer MCP"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "silver-engineer.silver-engineer",
+        "name": "silver",
+        "fullName": "Silver Engineer",
+        "description": "Your senior AI pair-programmer — with deep project memory, skill templates, and HITL workflow execution.",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "summary",
+            "description": "Show today's work summary (Jira / GitHub digest)"
+          },
+          {
+            "name": "skills",
+            "description": "List all loaded skills and custom rules"
+          },
+          {
+            "name": "graph",
+            "description": "Open the Knowledge Graph dashboard"
+          },
+          {
+            "name": "workflow",
+            "description": "Execute a named workflow with HITL confirmation"
+          },
+          {
+            "name": "review",
+            "description": "Run AI code review on staged changes before pushing to Gerrit"
+          }
+        ]
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "silver_commit_code",
+        "tags": ["vcs", "git"],
+        "displayName": "Commit Code",
+        "modelDescription": "Stages and commits files to git with a conventional commit message. Always requires user confirmation.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "message": { "type": "string", "description": "Conventional commit message" },
+            "files": { "type": "array", "items": { "type": "string" }, "description": "File paths to stage (empty = all staged)" }
+          },
+          "required": ["message"]
+        }
+      },
+      {
+        "name": "silver_update_jira",
+        "tags": ["jira", "project-management"],
+        "displayName": "Update Jira Ticket",
+        "modelDescription": "Updates a Jira issue status, comment, or assignee. Requires confirmation before writing.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "issueKey": { "type": "string" },
+            "status": { "type": "string" },
+            "comment": { "type": "string" }
+          },
+          "required": ["issueKey"]
+        }
+      },
+      {
+        "name": "silver_generate_component",
+        "tags": ["code-generation"],
+        "displayName": "Generate Component",
+        "modelDescription": "Scaffolds a new source component (class, module, test) from a skill template.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "skillName": { "type": "string" },
+            "targetPath": { "type": "string" },
+            "params": { "type": "object" }
+          },
+          "required": ["skillName", "targetPath"]
+        }
+      },
+      {
+        "name": "silver_recall",
+        "tags": ["memory", "knowledge-graph"],
+        "displayName": "Recall from Knowledge Graph",
+        "modelDescription": "Queries the local GraphRAG (knowledge graph + vector store) for relevant context about colleagues, tech stack, or past decisions.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": { "type": "string" },
+            "topK": { "type": "number", "default": 5 }
+          },
+          "required": ["query"]
+        }
+      },
+      {
+        "name": "silver_review_code",
+        "tags": ["git", "review", "quality"],
+        "displayName": "Review Code (pre-push)",
+        "modelDescription": "Captures staged git diff and commit message for AI review. Determines reviewer type from commit prefix (fix/feat/static/test). Use before pushing.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": { "type": "string", "enum": ["staged", "last-commit"], "default": "staged", "description": "staged = git diff --staged, last-commit = HEAD~1..HEAD" }
+          }
+        }
+      },
+      {
+        "name": "silver_push_gerrit",
+        "tags": ["git", "gerrit"],
+        "displayName": "Push to Gerrit",
+        "modelDescription": "Pushes the current commit to Gerrit for human review (refs/for/<branch>). Always requires user confirmation.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "branch": { "type": "string", "default": "main", "description": "Target branch (e.g. main, develop)" }
+          }
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "silver-engineer.openDashboard",
+        "title": "Silver Engineer: Open Dashboard",
+        "category": "Silver Engineer"
+      },
+      {
+        "command": "silver-engineer.reloadSkills",
+        "title": "Silver Engineer: Reload Skills",
+        "category": "Silver Engineer"
+      },
+      {
+        "command": "silver-engineer.showSummary",
+        "title": "Silver Engineer: Show Today's Summary",
+        "category": "Silver Engineer"
+      },
+      {
+        "command": "silver-engineer.clearMemory",
+        "title": "Silver Engineer: Clear Local Memory",
+        "category": "Silver Engineer"
+      },
+      {
+        "command": "silver-engineer.configureSecrets",
+        "title": "Silver Engineer: Configure API Credentials",
+        "category": "Silver Engineer"
+      },
+      {
+        "command": "silver-engineer.pushToGerrit",
+        "title": "Silver Engineer: Push to Gerrit",
+        "category": "Silver Engineer"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "silver-engineer-sidebar",
+          "title": "Silver Engineer",
+          "icon": "assets/icon-sidebar.svg"
+        }
+      ]
+    },
+    "views": {
+      "silver-engineer-sidebar": [
+        {
+          "type": "webview",
+          "id": "silver-engineer.dashboard",
+          "name": "Dashboard"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Silver Engineer",
+      "properties": {
+        "silverEngineer.jiraBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL of your Jira instance (e.g. https://mycompany.atlassian.net)"
+        },
+        "silverEngineer.jiraProjectKey": {
+          "type": "string",
+          "default": "",
+          "description": "Jira project key filter for daily summaries"
+        },
+        "silverEngineer.githubOrg": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub organisation or user for PR/issue summaries"
+        },
+        "silverEngineer.enableDailySummary": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a daily work summary notification on first startup of the day"
+        },
+        "silverEngineer.maxAgentLoopIterations": {
+          "type": "number",
+          "default": 10,
+          "description": "Maximum number of Think→Try→Observe iterations in an agentic loop before the loop is aborted"
+        },
+        "silverEngineer.enableTelemetry": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt-in anonymous usage telemetry (no code or prompt content is ever sent)"
+        },
+        "silverEngineer.mcpPort": {
+          "type": "number",
+          "default": 0,
+          "description": "Preferred localhost port for the embedded MCP server (0 = auto-select)"
+        },
+        "silverEngineer.gerritTargetBranch": {
+          "type": "string",
+          "default": "main",
+          "description": "Target branch for Gerrit push (refs/for/<branch>). Set to your team's integration branch."
+        },
+        "silverEngineer.reviewMaxDiffLines": {
+          "type": "number",
+          "default": 400,
+          "description": "Maximum diff lines sent to the LLM during /review. Larger diffs are truncated."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build:prod",
+    "build": "node esbuild.config.js",
+    "build:prod": "npm run generate-icon && node esbuild.config.js --production",
+    "build:webview": "node esbuild.config.js --webview",
+    "watch": "node esbuild.config.js --watch",
+    "generate-icon": "node scripts/generate-icon.js",
+    "obfuscate": "node scripts/obfuscate.js",
+    "package": "npm run build:prod && npm run obfuscate && vsce package --no-dependencies",
+    "lint": "eslint src --ext ts",
+    "test": "node ./dist/test/runTests.js",
+    "pretest": "npm run build"
+  },
+  "dependencies": {
+    "graphology": "^0.25.4",
+    "graphology-types": "^0.24.7",
+    "vectra": "^0.7.0",
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.95.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@vscode/test-electron": "^2.4.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "eslint": "^8.56.0",
+    "javascript-obfuscator": "^4.1.0",
+    "typescript": "^5.4.0"
+  }
+}

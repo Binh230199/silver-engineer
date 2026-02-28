@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Packaged extension
+*.vsix
+
+# TypeScript incremental build
+*.tsbuildinfo
+
+# Environment & secrets (never commit)
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode-test/

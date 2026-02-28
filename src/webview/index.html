@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none';
+             script-src 'nonce-{{nonce}}' {{cspSource}};
+             style-src {{cspSource}} 'unsafe-inline';
+             img-src {{cspSource}} data:;">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Silver Engineer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 0;
+      background: var(--vscode-editor-background);
+      color: var(--vscode-editor-foreground);
+      font-family: var(--vscode-font-family, sans-serif);
+      font-size: var(--vscode-font-size, 13px);
+    }
+    #app { padding: 16px; display: flex; flex-direction: column; height: 100vh; }
+    header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    header h1 { margin: 0; font-size: 1.15em; font-weight: 600; }
+    .stats {
+      font-size: 0.78em;
+      color: var(--vscode-descriptionForeground);
+      margin-bottom: 10px;
+    }
+    #graph-container {
+      flex: 1;
+      min-height: 300px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+    #graph-canvas { display: block; width: 100%; height: 100%; }
+    .toolbar { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+    .btn {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 3px;
+      padding: 5px 12px;
+      cursor: pointer;
+      font-size: 0.82em;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: var(--vscode-button-hoverBackground); }
+    .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; font-size: 0.75em; }
+    .legend-item { display: flex; align-items: center; gap: 4px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <span style="font-size: 1.5em;">🪄</span>
+      <h1>Silver Engineer — Knowledge Graph</h1>
+    </header>
+
+    <div class="stats" id="stats">Loading graph…</div>
+
+    <div id="graph-container">
+      <canvas id="graph-canvas"></canvas>
+    </div>
+
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#4FC3F7"></div> Person</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#81C784"></div> Technology</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#FFB74D"></div> Module</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#F48FB1"></div> Work Item</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#CE93D8"></div> Decision</div>
+    </div>
+
+    <div class="toolbar">
+      <button class="btn" id="btn-summary">📋 Daily Summary</button>
+      <button class="btn" id="btn-skills">🛠️ List Skills</button>
+      <button class="btn" id="btn-refresh">🔄 Refresh Graph</button>
+      <button class="btn" id="btn-clear-memory">🗑️ Clear Memory</button>
+    </div>
+  </div>
+
+  <script nonce="{{nonce}}" src="{{webviewJsUri}}"></script>
+</body>
+</html>
