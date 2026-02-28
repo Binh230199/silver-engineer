@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { execSync } from 'child_process';
 import type { SilverServices } from '../types';
 import { extractTicketId } from '../core/mcp/tools';
+import { gatherDailyContext } from '../features/morning-briefing';
 
 const PARTICIPANT_ID = 'silver-engineer.silver-engineer';
 
@@ -81,7 +82,6 @@ async function handleSummaryCommand(
   svc: SilverServices,
 ): Promise<vscode.ChatResult> {
   stream.markdown('## 📋 Today\'s Summary\n\n');
-  const graphCtx = svc.graph.buildDailySummaryContext();
 
   const model = await selectModel();
   if (!model) {
@@ -89,14 +89,17 @@ async function handleSummaryCommand(
     return { metadata: {} };
   }
 
+  // Show loading indicator while fetching from MCP tools
+  stream.markdown('> Gathering data from Jira, Coverity, Gerrit…\n\n');
+
+  const { prompt, hasLiveData } = await gatherDailyContext(svc, token);
+
+  if (!hasLiveData) {
+    stream.markdown('> ⚪ No external MCP tools connected. Configure `.vscode/mcp.json` to get live Jira/Coverity/Gerrit data.\n\n');
+  }
+
   const messages = [
-    vscode.LanguageModelChatMessage.User(
-      '[SYSTEM] You are Silver Engineer — a senior AI pair-programmer with persistent project memory. ' +
-      'Produce a focused work digest based on the graph context provided.',
-    ),
-    vscode.LanguageModelChatMessage.User(
-      `Knowledge graph context:\n${graphCtx || '(empty)'}\n\nProvide today's actionable work summary.`,
-    ),
+    vscode.LanguageModelChatMessage.User(prompt),
   ];
 
   const response = await model.sendRequest(messages, {}, token);

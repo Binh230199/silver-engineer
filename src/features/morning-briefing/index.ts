@@ -122,6 +122,39 @@ export class NotificationManager {
 }
 
 // ---------------------------------------------------------------------------
+// Exported — reused by chat /summary command
+// ---------------------------------------------------------------------------
+
+export interface DailyContext {
+  prompt: string;
+  hasLiveData: boolean;
+}
+
+/**
+ * Gathers daily context from MCP tools + Knowledge Graph.
+ * Used by both the startup toast and the @silver /summary chat command.
+ */
+export async function gatherDailyContext(
+  svc: SilverServices,
+  token: vscode.CancellationToken,
+): Promise<DailyContext> {
+  const { discovery } = svc;
+
+  const [jiraData, coverityData, gerritData, confluenceData] = await Promise.all([
+    discovery.invoke('JIRA_MY_ISSUES',          { jql: 'assignee = currentUser() AND status != Done AND updated >= -1d', maxResults: 10 }, token),
+    discovery.invoke('COVERITY_DEFECTS',         { status: 'new', since: yesterdayIso() }, token),
+    discovery.invoke('GERRIT_PENDING',           { q: 'is:open reviewer:self', limit: 10 }, token),
+    discovery.invoke('CONFLUENCE_NOTIFICATIONS', { limit: 5 }, token),
+  ]);
+
+  const graphContext = svc.graph.buildDailySummaryContext();
+  const hasLiveData  = !!(jiraData || coverityData || gerritData || confluenceData);
+  const prompt       = buildSummaryPrompt(graphContext, jiraData, coverityData, gerritData, confluenceData);
+
+  return { prompt, hasLiveData };
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
