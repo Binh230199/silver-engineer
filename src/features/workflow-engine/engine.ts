@@ -214,12 +214,24 @@ export class WorkflowEngine {
       return { id: step.id, passed: false, output: '', skipped: false, failReason: msg };
     }
 
-    const inputText = this.resolveInput(step.input, variables);
+    let inputText = this.resolveInput(step.input, variables);
 
-    // Guard: if an input source was declared but resolved to empty, abort early
+    // If staged diff is empty, auto-stage all modified tracked files and retry
+    if (step.input === 'git_diff_staged' && !inputText.trim()) {
+      const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      try {
+        execSync('git add -u', { encoding: 'utf8', cwd });
+        inputText = this.resolveInput(step.input, variables);
+        if (inputText.trim()) {
+          stream.markdown('> ℹ️ Nothing was staged — auto-staged all modified tracked files (`git add -u`)\n\n');
+        }
+      } catch { /* fall through to guard below */ }
+    }
+
+    // Guard: if input source declared but still empty after auto-stage attempt
     if (step.input && !inputText.trim()) {
       const msg = step.input === 'git_diff_staged'
-        ? 'Nothing is staged — run `git add` before executing this workflow'
+        ? 'No changes to stage — working tree is clean'
         : `Input \`${step.input}\` resolved to empty`;
       stream.markdown(`> ⚠️ ${msg}\n\n`);
       return { id: step.id, passed: false, output: '', skipped: false, failReason: msg };
