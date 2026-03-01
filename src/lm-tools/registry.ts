@@ -269,7 +269,7 @@ export class ToolRegistry {
   private readonly registry = new Map<string, SilverTool>();
 
   constructor(
-    private readonly ctx: vscode.ExtensionContext,
+    _ctx: vscode.ExtensionContext,
     private readonly svc: SilverServices,
   ) {}
 
@@ -282,33 +282,6 @@ export class ToolRegistry {
 
   register(tool: SilverTool): void {
     this.registry.set(tool.name, tool);
-
-    // Register with VS Code LM Tool API when available
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const lm = vscode.lm as any;
-    if (typeof lm?.registerTool === 'function') {
-      const disposable = lm.registerTool(tool.name, {
-        prepareInvocation: async (options: { input: ToolInput }, _token: vscode.CancellationToken) => {
-          return {
-            invocationMessage: tool.prepareConfirmation(options.input),
-          };
-        },
-        invoke: async (options: { input: ToolInput }, _token: vscode.CancellationToken) => {
-          const result = await tool.invoke(options.input, this.svc);
-          return new vscode.LanguageModelToolResult([
-            new vscode.LanguageModelTextPart(result.output),
-          ]);
-        },
-      });
-      this.ctx.subscriptions.push(disposable);
-    }
-
-    // Also register in the embedded MCP server
-    this.svc.mcp.registerTool({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: { type: 'object' },
-    });
   }
 
   // ── HITL manual invocation ────────────────────────────────────────────────
