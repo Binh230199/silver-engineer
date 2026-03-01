@@ -5,7 +5,6 @@ import { VectorStore } from './core/storage/vectors';
 import { SkillsLoader } from './core/skills/loader';
 import { FileWatcher } from './core/watcher';
 import { registerChatParticipant } from './chat/participant';
-import { McpServerManager } from './core/mcp/server';
 import { ToolRegistry } from './lm-tools/registry';
 import { NotificationManager } from './features/morning-briefing';
 import { DashboardPanel, SilverDashboardViewProvider } from './webview/panel';
@@ -27,13 +26,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const graph   = new GraphStore(context);
   const vectors = new VectorStore(context);
   const skills  = new SkillsLoader();
-  const mcp     = new McpServerManager(context, secrets);
 
   // Build partial services first so ToolRegistry can hold a reference;
   // the tools property is filled in immediately after.
   const discovery = new ToolDiscovery();
   const workflows  = new WorkflowEngine();
-  const partial = { secrets, graph, vectors, skills, mcp, discovery, workflows } as SilverServices;
+  const partial = { secrets, graph, vectors, skills, discovery, workflows } as SilverServices;
   const tools   = new ToolRegistry(context, partial);
   partial.tools  = tools;
   services = partial;
@@ -43,14 +41,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // ── Register LM tools (HITL) ────────────────────────────────────────────
   tools.registerAll();
-
-  // ── Wire MCP server → ToolRegistry HITL invoker ─────────────────────────
-  // The MCP server receives tool/call JSON-RPC requests from Copilot and
-  // forwards them through the ToolRegistry confirmation dialog before execution.
-  mcp.setToolInvoker(async (toolName, args) => {
-    const result = await tools.invokeWithConfirmation(toolName, args);
-    return result?.output;   // undefined = cancelled; string = success/failure message
-  });
 
   // ── Sidebar webview view provider (fills the Dashboard sidebar panel) ───
   context.subscriptions.push(
@@ -103,10 +93,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   void runBackgroundStartup(context, services);
 }
 
-export function deactivate(): void {
-  // Clean up MCP server on deactivation
-  services?.mcp.stop();
-}
+export function deactivate(): void {}
 
 // ---------------------------------------------------------------------------
 // Background startup (runs post-activation, non-blocking)
@@ -124,15 +111,12 @@ async function runBackgroundStartup(
     // 2. Load built-in + user-defined skills
     await svc.skills.load();
 
-    // 3. Start embedded MCP server
-    await svc.mcp.start();
-
-    // 4. Start File Watcher for .vscode/silver-skills/
+    // 3. Start File Watcher for .vscode/silver-skills/
     const watcher = new FileWatcher(context, svc.skills);
     await watcher.start();
     context.subscriptions.push(watcher);
 
-    // 5. Daily summary notification (respects lastNotificationDate guard)
+    // 4. Daily summary notification (respects lastNotificationDate guard)
     const config = vscode.workspace.getConfiguration('silverEngineer');
     if (config.get<boolean>('enableDailySummary', true)) {
       await NotificationManager.maybeShowDailySummary(context, svc);

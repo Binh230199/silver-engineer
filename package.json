@@ -1,7 +1,7 @@
 {
   "name": "silver-engineer",
   "displayName": "Silver Engineer",
-  "description": "A senior-engineer AI assistant — local GraphRAG, embedded MCP server, Chat Participant, Skills system, and HITL tool invocation.",
+  "description": "A senior-engineer AI assistant — local GraphRAG, Chat Participant, Skills system, and HITL workflow execution.",
   "version": "0.1.0",
   "publisher": "silver-engineer",
   "engines": {
@@ -30,12 +30,6 @@
     "onStartupFinished"
   ],
   "contributes": {
-    "mcpServerDefinitionProviders": [
-      {
-        "id": "silver-engineer.mcp",
-        "label": "Silver Engineer MCP"
-      }
-    ],
     "chatParticipants": [
       {
         "id": "silver-engineer.silver-engineer",
@@ -310,11 +304,6 @@
           "type": "boolean",
           "default": false,
           "description": "Opt-in anonymous usage telemetry (no code or prompt content is ever sent)"
-        },
-        "silverEngineer.mcpPort": {
-          "type": "number",
-          "default": 0,
-          "description": "Preferred localhost port for the embedded MCP server (0 = auto-select)"
         },
         "silverEngineer.gerritTargetBranch": {
           "type": "string",
