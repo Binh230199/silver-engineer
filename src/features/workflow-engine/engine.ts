@@ -11,7 +11,7 @@ import type {
 } from './types';
 
 // ---------------------------------------------------------------------------
-// WorkflowEngine - Test auto-push-commit workflow example:
+// WorkflowEngine
 //
 // Reads .github/workflows/silver/*.yml from the workspace, parses them,
 // and executes with full branching logic:
@@ -608,6 +608,12 @@ function detectPlatform(remoteUrl: string): string {
   return 'unknown';
 }
 
+/**
+ *
+ * @param platform
+ * @param branch
+ * @returns
+ */
 function buildPushCmd(platform: string, branch: string): string {
   switch (platform) {
     case 'github':
