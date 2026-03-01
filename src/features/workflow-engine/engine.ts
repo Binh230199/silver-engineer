@@ -84,9 +84,18 @@ export class WorkflowEngine {
     const variables = new Map<string, string>();
     const stepResults = new Map<string, StepResult>();
 
+    // ── Populate built-in variables (git remote, platform, push command) ──
+    populateGitVariables(variables);
+
     stream.markdown(`## ⚙️ Workflow: \`${workflow.name}\`\n`);
     if (workflow.description) {
       stream.markdown(`> ${workflow.description}\n`);
+    }
+    // Show detected platform info
+    const platform = variables.get('git_platform');
+    const pushCmd = variables.get('git_push_cmd');
+    if (platform) {
+      stream.markdown(`> 🌐 Platform: **${platform}** — push: \`${pushCmd}\`\n`);
     }
     stream.markdown(`\n**${workflow.steps.length} steps** — running now…\n\n`);
     stream.markdown('---\n\n');
@@ -177,7 +186,7 @@ export class WorkflowEngine {
     stream: vscode.ChatResponseStream,
     token: vscode.CancellationToken,
   ): Promise<StepResult> {
-    const label = step.description ?? step.id;
+    const label = interpolate(step.description ?? step.id, variables);
     stream.markdown(`### 🔹 \`${step.id}\` — ${label}\n\n`);
 
     try {
@@ -528,4 +537,62 @@ function stripCodeFences(text: string): string {
 
 function skipNoWorkspace(id: string): StepResult {
   return { id, passed: false, output: '', skipped: false, failReason: 'No workspace folder open' };
+}
+
+// ---------------------------------------------------------------------------
+// Git platform detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Detects the git remote URL, infers the platform (gerrit/github/gitlab/bitbucket),
+ * and populates built-in variables:
+ *   {{git_remote_url}}  — raw remote URL
+ *   {{git_branch}}      — current branch name
+ *   {{git_platform}}    — gerrit | github | gitlab | bitbucket | unknown
+ *   {{git_push_cmd}}    — the correct push command for this platform/branch
+ */
+function populateGitVariables(variables: Map<string, string>): void {
+  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const opts = { encoding: 'utf8' as const, cwd };
+
+  try {
+    const remoteUrl = execSync('git remote get-url origin', opts).trim();
+    variables.set('git_remote_url', remoteUrl);
+
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', opts).trim();
+    variables.set('git_branch', branch);
+
+    const platform = detectPlatform(remoteUrl);
+    variables.set('git_platform', platform);
+    variables.set('git_push_cmd', buildPushCmd(platform, branch));
+  } catch {
+    // Non-git workspace — leave variables unset
+    variables.set('git_platform', 'unknown');
+    variables.set('git_push_cmd', 'git push');
+  }
+}
+
+function detectPlatform(remoteUrl: string): string {
+  const u = remoteUrl.toLowerCase();
+  if (u.includes('github.com'))    return 'github';
+  if (u.includes('gitlab.com') || u.includes('gitlab'))  return 'gitlab';
+  if (u.includes('bitbucket.org')) return 'bitbucket';
+  // Gerrit detection: ssh port 29418, or /a/ HTTP prefix, or explicit gerrit hostname
+  if (u.includes(':29418') || u.includes('/a/') || u.includes('gerrit')) return 'gerrit';
+  // Self-hosted GitLab/GitHub patterns — fall back to inspecting refs
+  return 'unknown';
+}
+
+function buildPushCmd(platform: string, branch: string): string {
+  switch (platform) {
+    case 'github':
+    case 'gitlab':
+    case 'bitbucket':
+      return `git push origin HEAD:${branch}`;
+    case 'gerrit':
+      return `git push origin HEAD:refs/for/${branch}`;
+    default:
+      // Unknown: try generic push; user can override via workflow YAML
+      return `git push origin HEAD:${branch}`;
+  }
 }
