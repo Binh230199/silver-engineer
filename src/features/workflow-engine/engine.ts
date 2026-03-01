@@ -11,7 +11,7 @@ import type {
 } from './types';
 
 // ---------------------------------------------------------------------------
-// WorkflowEngine
+// WorkflowEngine - Test auto-push-commit workflow example:
 //
 // Reads .github/workflows/silver/*.yml from the workspace, parses them,
 // and executes with full branching logic:
@@ -227,7 +227,7 @@ export class WorkflowEngine {
 
     // If staged diff is empty, auto-stage all modified tracked files and retry
     if (step.input === 'git_diff_staged' && !inputText.trim()) {
-      const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const cwd = resolveGitCwd();
       try {
         execSync('git add -u', { encoding: 'utf8', cwd });
         inputText = this.resolveInput(step.input, variables);
@@ -358,7 +358,7 @@ export class WorkflowEngine {
     variables: Map<string, string>,
     stream: vscode.ChatResponseStream,
   ): StepResult {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const cwd = resolveGitCwd();
     const rawCmd = step.command ?? '';
     const cmd = interpolate(rawCmd, variables);
 
@@ -424,7 +424,7 @@ export class WorkflowEngine {
     const varMatch = input.match(/^\{\{(.+)\}\}$/);
     if (varMatch) return variables.get(varMatch[1].trim()) ?? '';
 
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const cwd = resolveGitCwd();
     const opts = { encoding: 'utf8' as const, maxBuffer: 512 * 1024, cwd };
 
     try {
@@ -539,6 +539,31 @@ function skipNoWorkspace(id: string): StepResult {
   return { id, passed: false, output: '', skipped: false, failReason: 'No workspace folder open' };
 }
 
+/**
+ * Returns the git repository root for the currently active editor file.
+ * Falls back to the first workspace folder if no editor is open or the
+ * file is not inside a git repo.
+ *
+ * This correctly handles workspaces where the open folder (e.g. d:\AI) is
+ * a different git repo than the file being edited (e.g. d:\AI\silver-engineer).
+ */
+function resolveGitCwd(): string | undefined {
+  // 1. Try active editor's file path first
+  const activeUri = vscode.window.activeTextEditor?.document.uri;
+  if (activeUri && activeUri.scheme === 'file') {
+    const fileDir = path.dirname(activeUri.fsPath);
+    try {
+      const root = execSync('git rev-parse --show-toplevel', {
+        encoding: 'utf8',
+        cwd: fileDir,
+      }).trim();
+      if (root) return root;
+    } catch { /* not a git repo, fall through */ }
+  }
+  // 2. Fall back to workspace folder
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
 // ---------------------------------------------------------------------------
 // Git platform detection
 // ---------------------------------------------------------------------------
@@ -552,7 +577,7 @@ function skipNoWorkspace(id: string): StepResult {
  *   {{git_push_cmd}}    — the correct push command for this platform/branch
  */
 function populateGitVariables(variables: Map<string, string>): void {
-  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const cwd = resolveGitCwd();
   const opts = { encoding: 'utf8' as const, cwd };
 
   try {
