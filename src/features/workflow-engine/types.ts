@@ -9,6 +9,7 @@
 //   agent  → loads .github/agents/<name>.agent.md, calls LLM with diff/context
 //   prompt → loads .github/prompts/<file>, calls LLM, optionally captures output
 //   shell  → runs a shell command, captures stdout
+//   input  → shows VS Code input box, captures user's answer into a variable
 //
 // Failure strategies
 //   abort         → stop the entire workflow, report failure
@@ -16,9 +17,12 @@
 //   retry(max: N) → retry up to N times before falling back to on_fail_fallback
 //
 // Variable system
-//   step.output: 'var_name' captures the step's LLM/shell output into a variable.
+//   step.output: 'var_name' captures the step's LLM/shell/input output into a variable.
 //   {{var_name}} in any field is replaced with the captured value at runtime.
 //   Built-in inputs: git_diff_staged, git_diff_last_commit, commit_message_last
+//   Built-in variables (set at workflow start):
+//     git_remote_url, git_branch, git_platform, git_push_cmd,
+//     git_recent_commits, git_jira_ticket
 // ---------------------------------------------------------------------------
 
 export interface WorkflowStep {
@@ -26,9 +30,12 @@ export interface WorkflowStep {
   id: string;
 
   /** Step type */
-  type: 'agent' | 'prompt' | 'shell';
+  type: 'agent' | 'prompt' | 'shell' | 'input';
 
-  /** [agent] Name of agent — reads .github/agents/<agent>.agent.md */
+  /**
+   * [agent] Name of agent — reads .github/agents/<agent>.agent.md
+   * Supports {{variable}} interpolation for dynamic agent selection.
+   */
   agent?: string;
 
   /** [prompt] Path relative to workspace root, e.g. .github/prompts/create-commit-message.prompt.md */
@@ -36,6 +43,15 @@ export interface WorkflowStep {
 
   /** [shell] Shell command to run. Supports {{variable}} interpolation */
   command?: string;
+
+  /** [input] Question shown to the user in the VS Code input box */
+  question?: string;
+
+  /** [input] Placeholder text pre-filled in the input box. Supports {{variable}} */
+  placeholder?: string;
+
+  /** [input] If true, leaving the input empty still passes the step (output = '') */
+  optional?: boolean;
 
   /**
    * Input to pass to LLM steps.
@@ -64,8 +80,11 @@ export interface WorkflowStep {
 
   /**
    * Optional JS-like boolean expression evaluated before running the step.
-   * Supported: 'steps.<id>.passed', '&&', '||', '!', parentheses
-   * Example: 'steps.review-style.passed && steps.review-static.passed'
+   * Supported:
+   *   'steps.<id>.passed'  → true/false based on step result
+   *   'vars.<name>'        → true if the variable is non-empty, false otherwise
+   *   '&&', '||', '!', parentheses
+   * Example: 'steps.review-style.passed && vars.jira_ticket'
    */
   condition?: string;
 

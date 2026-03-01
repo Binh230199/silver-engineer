@@ -107,7 +107,7 @@ export class WorkflowEngine {
 
       // ── Evaluate condition ──────────────────────────────────────────────
       if (step.condition) {
-        const conditionPassed = evaluateCondition(step.condition, stepResults);
+        const conditionPassed = evaluateCondition(step.condition, stepResults, variables);
         if (!conditionPassed) {
           const r: StepResult = { id: step.id, passed: true, output: '', skipped: true };
           stepResults.set(step.id, r);
@@ -194,6 +194,7 @@ export class WorkflowEngine {
         case 'agent':  return await this.runAgentStep(step, variables, stream, token);
         case 'prompt': return await this.runPromptStep(step, variables, stream, token);
         case 'shell':  return this.runShellStep(step, variables, stream);
+        case 'input':  return await this.runInputStep(step, variables, stream);
         default: {
           stream.markdown(`> ⚠️ Unknown step type: \`${(step as WorkflowStep).type}\`\n\n`);
           return { id: step.id, passed: false, output: '', skipped: false, failReason: `unknown type: ${step.type}` };
@@ -215,7 +216,9 @@ export class WorkflowEngine {
     stream: vscode.ChatResponseStream,
     token: vscode.CancellationToken,
   ): Promise<StepResult> {
-    const agentName = step.agent ?? '';
+    // Interpolate variables into agent name to support dynamic selection
+    // e.g. agent: "{{selected_agent}}" → resolves to "reviewer-feature" at runtime
+    const agentName = interpolate(step.agent ?? '', variables);
     const { body: agentBody, model: agentModel } = this.loadAgentPrompt(agentName);
     if (!agentBody) {
       const msg = `.github/agents/${agentName}.agent.md not found`;
@@ -390,6 +393,46 @@ export class WorkflowEngine {
     }
   }
 
+  /**
+   * Runs an 'input' step: shows a VS Code input box, captures the answer.
+   * If optional: true, leaving the field empty still passes the step.
+   */
+  private async runInputStep(
+    step: WorkflowStep,
+    variables: Map<string, string>,
+    stream: vscode.ChatResponseStream,
+  ): Promise<StepResult> {
+    const question = interpolate(step.question ?? step.description ?? step.id, variables);
+    const placeholder = interpolate(step.placeholder ?? '', variables);
+
+    stream.markdown(`> 💬 **Input required:** ${question}\n\n`);
+
+    const value = await vscode.window.showInputBox({
+      prompt: question,
+      placeHolder: placeholder || undefined,
+      ignoreFocusOut: true,
+    });
+
+    if (value === undefined) {
+      // User pressed Escape
+      if (step.optional) {
+        stream.markdown('> ⏭️ Input skipped (optional)\n\n');
+        return { id: step.id, passed: true, output: '', skipped: false };
+      }
+      stream.markdown('> ❌ Input cancelled\n\n');
+      return { id: step.id, passed: false, output: '', skipped: false, failReason: 'Input cancelled by user' };
+    }
+
+    if (!value.trim() && !step.optional) {
+      stream.markdown('> ❌ Input required but was empty\n\n');
+      return { id: step.id, passed: false, output: '', skipped: false, failReason: 'Empty input' };
+    }
+
+    const display = value.trim() ? `\`${value}\`` : '*(empty — skipped)*';
+    stream.markdown(`> ✅ Captured: ${display}\n\n`);
+    return { id: step.id, passed: true, output: value, skipped: false };
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────
 
   private workflowDir(): string | null {
@@ -481,7 +524,11 @@ function checkExpect(output: string, expect?: string): boolean {
  * Evaluates a condition expression like "steps.review.passed && steps.static.passed"
  * Only supports: steps.<id>.passed references, &&, ||, !, parentheses.
  */
-function evaluateCondition(condition: string, results: Map<string, StepResult>): boolean {
+function evaluateCondition(
+  condition: string,
+  results: Map<string, StepResult>,
+  variables: Map<string, string>,
+): boolean {
   // Replace steps.<id>.passed with true/false
   let expr = condition.replace(/steps\.([a-zA-Z0-9_-]+)\.passed/g, (_m, id) => {
     const r = results.get(id);
@@ -492,6 +539,12 @@ function evaluateCondition(condition: string, results: Map<string, StepResult>):
   expr = expr.replace(/steps\.([a-zA-Z0-9_-]+)\.skipped/g, (_m, id) => {
     const r = results.get(id);
     return r ? String(r.skipped) : 'false';
+  });
+
+  // Replace vars.<name> → true if variable is non-empty, false otherwise
+  expr = expr.replace(/vars\.([a-zA-Z0-9_]+)/g, (_m, name) => {
+    const val = variables.get(name);
+    return val && val.trim() ? 'true' : 'false';
   });
 
   // Evaluate only if safe (only contains booleans, logic operators, parens)
@@ -571,10 +624,12 @@ function resolveGitCwd(): string | undefined {
 /**
  * Detects the git remote URL, infers the platform (gerrit/github/gitlab/bitbucket),
  * and populates built-in variables:
- *   {{git_remote_url}}  — raw remote URL
- *   {{git_branch}}      — current branch name
- *   {{git_platform}}    — gerrit | github | gitlab | bitbucket | unknown
- *   {{git_push_cmd}}    — the correct push command for this platform/branch
+ *   {{git_remote_url}}   — raw remote URL
+ *   {{git_branch}}       — current branch name
+ *   {{git_platform}}     — gerrit | github | gitlab | bitbucket | unknown
+ *   {{git_push_cmd}}     — the correct push command for this platform/branch
+ *   {{git_recent_commits}} — last 5 commit messages (one per line)
+ *   {{git_jira_ticket}}  — JIRA project prefix if detected (e.g. 'PROJ'), else ''
  */
 function populateGitVariables(variables: Map<string, string>): void {
   const cwd = resolveGitCwd();
@@ -597,11 +652,16 @@ function populateGitVariables(variables: Map<string, string>): void {
       opts,
     ).trim();
     variables.set('git_recent_commits', recentCommits);
+
+    // Detect JIRA-style ticket prefix from recent commits (e.g. PROJ-1234 → 'PROJ')
+    const jiraMatch = recentCommits.match(/\b([A-Z]{2,10})-\d+\b/);
+    variables.set('git_jira_ticket', jiraMatch ? jiraMatch[1] : '');
   } catch {
     // Non-git workspace — leave variables unset
     variables.set('git_platform', 'unknown');
     variables.set('git_push_cmd', 'git push');
     variables.set('git_recent_commits', '(no git history)');
+    variables.set('git_jira_ticket', '');
   }
 }
 
@@ -618,9 +678,9 @@ function detectPlatform(remoteUrl: string): string {
 
 /**
  *
- * @param platform
- * @param branch
- * @returns
+ * @param platform Builds the correct git push command for the given platform and branch.
+ * @param branch The current branch name, used to construct the push command.
+ * @returns The git push command for the given platform and branch.
  */
 function buildPushCmd(platform: string, branch: string): string {
   switch (platform) {
