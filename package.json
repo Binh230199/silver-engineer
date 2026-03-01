@@ -314,6 +314,12 @@
           "type": "number",
           "default": 400,
           "description": "Maximum diff lines sent to the LLM during /review. Larger diffs are truncated."
+        },
+        "silverEngineer.gitPlatform": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "gerrit", "github", "gitlab", "bitbucket"],
+          "description": "Override git platform detection. Use 'auto' to detect from remote URL. Set to 'gerrit' if your company Gerrit URL doesn't contain 'gerrit' in the hostname."
         }
       }
     }

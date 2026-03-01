@@ -635,6 +635,11 @@ function populateGitVariables(variables: Map<string, string>): void {
   const cwd = resolveGitCwd();
   const opts = { encoding: 'utf8' as const, cwd };
 
+  // Allow user to override platform detection via VS Code setting
+  const platformOverride = vscode.workspace
+    .getConfiguration('silverEngineer')
+    .get<string>('gitPlatform', 'auto');
+
   try {
     const remoteUrl = execSync('git remote get-url origin', opts).trim();
     variables.set('git_remote_url', remoteUrl);
@@ -642,7 +647,9 @@ function populateGitVariables(variables: Map<string, string>): void {
     const branch = execSync('git rev-parse --abbrev-ref HEAD', opts).trim();
     variables.set('git_branch', branch);
 
-    const platform = detectPlatform(remoteUrl);
+    const platform = platformOverride !== 'auto'
+      ? platformOverride
+      : detectPlatform(remoteUrl, cwd);
     variables.set('git_platform', platform);
     variables.set('git_push_cmd', buildPushCmd(platform, branch));
 
@@ -665,14 +672,20 @@ function populateGitVariables(variables: Map<string, string>): void {
   }
 }
 
-function detectPlatform(remoteUrl: string): string {
+function detectPlatform(remoteUrl: string, cwd?: string): string {
   const u = remoteUrl.toLowerCase();
   if (u.includes('github.com'))    return 'github';
   if (u.includes('gitlab.com') || u.includes('gitlab'))  return 'gitlab';
   if (u.includes('bitbucket.org')) return 'bitbucket';
   // Gerrit detection: ssh port 29418, or /a/ HTTP prefix, or explicit gerrit hostname
   if (u.includes(':29418') || u.includes('/a/') || u.includes('gerrit')) return 'gerrit';
-  // Self-hosted GitLab/GitHub patterns — fall back to inspecting refs
+  // Fallback: check if push refspec is configured to refs/for/* (common Gerrit setup)
+  try {
+    const pushRefspec = execSync('git config remote.origin.push', {
+      encoding: 'utf8', cwd,
+    }).trim();
+    if (pushRefspec.includes('refs/for/')) return 'gerrit';
+  } catch { /* no push refspec configured */ }
   return 'unknown';
 }
 
