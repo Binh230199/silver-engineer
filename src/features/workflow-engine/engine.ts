@@ -590,10 +590,18 @@ function populateGitVariables(variables: Map<string, string>): void {
     const platform = detectPlatform(remoteUrl);
     variables.set('git_platform', platform);
     variables.set('git_push_cmd', buildPushCmd(platform, branch));
+
+    // Last 5 commit messages — used by prompts to infer project commit format
+    const recentCommits = execSync(
+      'git log -5 --pretty=format:"- %s"',
+      opts,
+    ).trim();
+    variables.set('git_recent_commits', recentCommits);
   } catch {
     // Non-git workspace — leave variables unset
     variables.set('git_platform', 'unknown');
     variables.set('git_push_cmd', 'git push');
+    variables.set('git_recent_commits', '(no git history)');
   }
 }
 
