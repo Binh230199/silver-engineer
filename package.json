@@ -330,7 +330,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run build:prod",
+    "vscode:prepublish": "node -e \"console.log('[prepublish] skipped — already built by package script')\"",
     "build": "node esbuild.config.js",
     "build:prod": "npm run generate-icon && node esbuild.config.js --production",
     "build:webview": "node esbuild.config.js --webview",
