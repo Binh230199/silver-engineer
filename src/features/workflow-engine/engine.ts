@@ -548,7 +548,7 @@ function evaluateCondition(
   });
 
   // Evaluate only if safe (only contains booleans, logic operators, parens)
-  if (/^[true|false|&&|\|\||!|\s|()]+$/.test(expr)) {
+  if (/^[truefalse&|!\s()]+$/.test(expr)) {
     try {
       // eslint-disable-next-line no-new-func
       return Boolean(new Function(`return (${expr})`)());
