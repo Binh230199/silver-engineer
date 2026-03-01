@@ -329,12 +329,16 @@ export class WorkflowEngine {
       return { id: step.id, passed: false, output, skipped: false, failReason };
     }
 
+    // If this step's output will be captured as a variable, strip markdown
+    // code fences so the raw value can be used directly in shell commands.
+    const capturedOutput = step.output ? stripCodeFences(output) : output;
+
     if (step.output) {
       stream.markdown(`> 📋 Output captured to \`{{${step.output}}}\`\n\n`);
     }
 
     stream.markdown(`> ✅ Passed\n\n`);
-    return { id: step.id, passed: true, output, skipped: false };
+    return { id: step.id, passed: true, output: capturedOutput, skipped: false };
   }
 
   /**
@@ -506,6 +510,20 @@ function parseRetry(onFail?: string): number {
  */
 function interpolate(text: string, variables: Map<string, string>): string {
   return text.replace(/\{\{([^}]+)\}\}/g, (_m, key) => variables.get(key.trim()) ?? _m);
+}
+
+/**
+ * Strips markdown code fences from LLM output.
+ * Handles: ```\ntext\n``` and ```lang\ntext\n```
+ * Returns the inner content trimmed.
+ */
+function stripCodeFences(text: string): string {
+  const fenced = text.trim().match(/^```[^\n]*\n([\s\S]*?)\n?```\s*$/);
+  if (fenced) return fenced[1].trim();
+  // Also strip inline single backticks if the whole thing is wrapped
+  const inline = text.trim().match(/^`([^`]+)`$/);
+  if (inline) return inline[1].trim();
+  return text.trim();
 }
 
 function skipNoWorkspace(id: string): StepResult {
